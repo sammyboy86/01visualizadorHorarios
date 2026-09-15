@@ -14,6 +14,7 @@ import streamlit.components.v1 as components
 import os
 import sys
 import tempfile
+import threading
 import shutil
 import pathlib
 import zipfile
@@ -40,6 +41,8 @@ if not hasattr(gen, "_st_orig_find_input_excel"):
 
 _ORIG_LOAD = gen._st_orig_load_data_unificado
 _ORIG_FIND = gen._st_orig_find_input_excel
+
+_GEN_LOCK = threading.Lock()
 
 # ── Page config (must be first Streamlit call) ──────────────
 st.set_page_config(
@@ -243,6 +246,10 @@ def _prepare_workdir(reporte, secciones=None) -> str:
 # ═════════════════════════════════════════════════════════════
 def _run(wd: str, sedes: set, grupos: list, bar, status) -> list[str]:
     """Execute schedule generation.  Returns list of absolute ZIP paths."""
+    if not _GEN_LOCK.acquire(blocking=False):
+        status.warning("⏳ Otro usuario está generando horarios. Esperando…")
+        _GEN_LOCK.acquire()  # block until available
+
     saved = os.getcwd()
     gen.load_data_unificado = _ORIG_LOAD
     gen.find_input_excel = _ORIG_FIND
@@ -317,6 +324,7 @@ def _run(wd: str, sedes: set, grupos: list, bar, status) -> list[str]:
         os.chdir(saved)
         gen.load_data_unificado = _ORIG_LOAD
         gen.find_input_excel = _ORIG_FIND
+        _GEN_LOCK.release()
 
 
 # ═════════════════════════════════════════════════════════════
