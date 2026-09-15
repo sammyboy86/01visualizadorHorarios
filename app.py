@@ -48,8 +48,8 @@ _GEN_LOCK = threading.Lock()
 st.set_page_config(
     page_title="Horarios UTC",
     page_icon="📅",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    layout="centered",
+    initial_sidebar_state="collapsed",
 )
 
 # ── Constants ───────────────────────────────────────────────
@@ -88,6 +88,12 @@ def _inject_css():
     html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
     h1, h2, h3, h4 { font-family: 'Outfit', sans-serif !important; }
 
+    /* ── Hide sidebar completely ── */
+    section[data-testid="stSidebar"] { display: none !important; }
+    button[data-testid="stSidebarCollapseButton"],
+    button[data-testid="stSidebarNavButton"],
+    [data-testid="collapsedControl"] { display: none !important; }
+
     /* ── Login ── */
     .login-wrap { display:flex; justify-content:center; padding-top:6vh; }
     .login-card {
@@ -124,16 +130,40 @@ def _inject_css():
     .app-hdr .t h2 { font-size:1.15rem; margin:0; color:#fafafa; }
     .app-hdr .t p  { font-size:.78rem; margin:0; color:#6b7280; }
 
-    /* ── Sidebar ── */
-    section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg,#1a1d29,#0e1117);
+    /* ── Step cards ── */
+    .step-card {
+        background: linear-gradient(145deg, rgba(26,29,41,.7), rgba(14,17,23,.85));
+        border: 1px solid rgba(79,139,249,.12);
+        border-radius: 16px;
+        padding: 1.5rem 1.8rem 1.2rem;
+        margin-bottom: 0;
     }
-    section[data-testid="stSidebar"] h3 {
-        color:#4f8bf9 !important; font-size:.8rem !important;
-        text-transform:uppercase; letter-spacing:1.5px;
-        margin-top:1.4rem !important;
+    .step-header {
+        display: flex; align-items: center; gap: .75rem;
+        margin-bottom: 1rem;
     }
-    .sep { border:none; border-top:1px solid rgba(79,139,249,.1); margin:1.2rem 0; }
+    .step-num {
+        background: linear-gradient(135deg,#4f8bf9,#6c63ff);
+        color: #fff; font-family:'Outfit',sans-serif;
+        font-weight: 700; font-size: .85rem;
+        width: 32px; height: 32px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0;
+        box-shadow: 0 4px 12px rgba(79,139,249,.3);
+    }
+    .step-title {
+        font-family:'Outfit',sans-serif; font-size: 1rem;
+        font-weight: 600; color: #e0e0e0; margin: 0;
+    }
+    .step-connector {
+        display: flex; justify-content: center;
+        padding: .15rem 0;
+    }
+    .step-connector .line {
+        width: 2px; height: 28px;
+        background: linear-gradient(180deg, rgba(79,139,249,.35), rgba(79,139,249,.08));
+        border-radius: 1px;
+    }
 
     /* ── Metric cards ── */
     [data-testid="stMetric"] {
@@ -154,7 +184,32 @@ def _inject_css():
         transform:translateY(-2px) !important;
         box-shadow:0 8px 24px rgba(79,139,249,.4) !important;
     }
+
+    /* ── Logout button ── */
+    .logout-row {
+        display: flex; justify-content: flex-end;
+        margin-bottom: .5rem;
+    }
     </style>""", unsafe_allow_html=True)
+
+
+def _step_card_start(num: int, title: str):
+    """Render the opening of a styled step card."""
+    st.markdown(
+        f"""<div class="step-card"><div class="step-header">
+        <div class="step-num">{num}</div>
+        <div class="step-title">{title}</div>
+        </div></div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def _step_connector():
+    """Render a subtle vertical connector between steps."""
+    st.markdown(
+        '<div class="step-connector"><div class="line"></div></div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ═════════════════════════════════════════════════════════════
@@ -328,31 +383,44 @@ def _run(wd: str, sedes: set, grupos: list, bar, status) -> list[str]:
 
 
 # ═════════════════════════════════════════════════════════════
-#  MAIN APPLICATION
+#  MAIN APPLICATION — Vertical step-by-step flow
 # ═════════════════════════════════════════════════════════════
 def _app():
     logo = _logo_b64()
 
-    # ── Header ──
-    st.markdown(
-        f"""<div class="app-hdr">
-        <img src="data:image/png;base64,{logo}" alt="UTC">
-        <div class="t">
-            <h2>📅 Visualizador de Horarios</h2>
-            <p>Genera reportes HTML de horarios por sede y grupo de semanas</p>
-        </div></div>""",
-        unsafe_allow_html=True,
-    )
+    # ── Header + logout ──
+    lcol, rcol = st.columns([5, 1])
+    with lcol:
+        st.markdown(
+            f"""<div class="app-hdr">
+            <img src="data:image/png;base64,{logo}" alt="UTC">
+            <div class="t">
+                <h2>📅 Visualizador de Horarios</h2>
+                <p>Genera reportes HTML de horarios por sede y grupo de semanas</p>
+            </div></div>""",
+            unsafe_allow_html=True,
+        )
+    with rcol:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🚪 Cerrar Sesión", use_container_width=True):
+            for k in list(st.session_state.keys()):
+                del st.session_state[k]
+            st.rerun()
 
-    # ═══ SIDEBAR ═══
-    with st.sidebar:
-        st.markdown("### 📁 Archivos")
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  STEP 1 — Upload files
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    _step_card_start(1, "📁 Subir archivos")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
         reporte = st.file_uploader(
             "Reporte Horarios y Paquetes (.xlsx)",
             type=["xlsx"],
             key="up_rep",
             help="Reporte Horarios y Paquetes - Proceso NNN.xlsx",
         )
+    with col_b:
         secciones = st.file_uploader(
             "Resultados Secciones (.xlsx) — opcional",
             type=["xlsx"],
@@ -360,65 +428,84 @@ def _app():
             help="Resultados - Secciones - Proceso NNN.xlsx · salones por día",
         )
 
-        st.markdown('<hr class="sep">', unsafe_allow_html=True)
-        st.markdown("### 🏫 Sedes")
+    if reporte:
+        st.success(f"✅ **{reporte.name}** cargado correctamente")
+    else:
+        st.info("👆 Suba el reporte para continuar")
 
-        # Auto-detect sedes from the uploaded file
-        detected = _detect_sedes(reporte) if reporte else []
-        options = sorted(set(SEDES_CONOCIDAS + detected))
-        defaults = [s for s in (detected or ["TOR"]) if s in options]
+    _step_connector()
 
-        sel = st.multiselect("Seleccionar sedes", options, default=defaults)
-        custom = st.text_input("Agregar sede (código)", placeholder="Ej: MTY")
-        sedes_final: set[str] = set(sel)
-        if custom and custom.strip():
-            sedes_final.add(custom.strip().upper())
-        if sedes_final:
-            st.caption(f"✔ **{', '.join(sorted(sedes_final))}**")
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  STEP 2 — Select sedes
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    _step_card_start(2, "🏫 Seleccionar sedes")
 
-        st.markdown('<hr class="sep">', unsafe_allow_html=True)
-        st.markdown("### 📅 Semanas")
+    detected = _detect_sedes(reporte) if reporte else []
+    options = sorted(set(SEDES_CONOCIDAS + detected))
+    defaults = [s for s in (detected or ["TOR"]) if s in options]
 
-        active: list[dict] = []
-        for g in GRUPOS_SEMANAS_CFG:
+    sel = st.multiselect("Sedes disponibles", options, default=defaults)
+    custom = st.text_input("Agregar sede personalizada (código)", placeholder="Ej: MTY")
+    sedes_final: set[str] = set(sel)
+    if custom and custom.strip():
+        sedes_final.add(custom.strip().upper())
+
+    if sedes_final:
+        st.success(f"✔ Sedes seleccionadas: **{', '.join(sorted(sedes_final))}**")
+    else:
+        st.info("Seleccione al menos una sede")
+
+    _step_connector()
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  STEP 3 — Select week groups
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    _step_card_start(3, "📅 Seleccionar semanas")
+
+    active: list[dict] = []
+    gcols = st.columns(len(GRUPOS_SEMANAS_CFG))
+    for gcol, g in zip(gcols, GRUPOS_SEMANAS_CFG):
+        with gcol:
             if st.checkbox(g["nombre"], value=True, key=f"g_{g['id']}"):
                 active.append(g)
 
-        st.markdown('<hr class="sep">', unsafe_allow_html=True)
-        if st.button("🚪 Cerrar Sesión", use_container_width=True):
-            for k in list(st.session_state.keys()):
-                del st.session_state[k]
-            st.rerun()
+    if active:
+        st.success(f"✔ {len(active)} grupo(s) de semanas seleccionado(s)")
+    else:
+        st.info("Seleccione al menos un grupo de semanas")
 
-    # ═══ MAIN AREA ═══
+    _step_connector()
 
-    # ── Validation ──
-    ready = True
-    if not reporte:
-        st.warning("📄 Suba el **Reporte Horarios y Paquetes**.")
-        ready = False
-    if not sedes_final:
-        st.warning("🏫 Seleccione al menos una **sede**.")
-        ready = False
-    if not active:
-        st.warning("📅 Seleccione al menos un **grupo de semanas**.")
-        ready = False
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  STEP 4 — Summary & Generate
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ready = bool(reporte and sedes_final and active)
+
+    _step_card_start(4, "🚀 Generar horarios")
 
     if ready:
         c1, c2, c3 = st.columns(3)
         c1.metric("Sedes", len(sedes_final))
         c2.metric("Grupos de semanas", len(active))
         c3.metric("Secciones", "✅ Incluido" if secciones else "⚠️ Sin archivo")
+        st.markdown("")
 
-    st.markdown("")
-    bcol, _ = st.columns([1, 2])
-    with bcol:
-        clicked = st.button(
-            "🚀 Generar Horarios",
-            use_container_width=True,
-            type="primary",
-            disabled=not ready,
-        )
+    if not ready:
+        missing = []
+        if not reporte:
+            missing.append("reporte")
+        if not sedes_final:
+            missing.append("sedes")
+        if not active:
+            missing.append("semanas")
+        st.warning(f"⚠️ Complete los pasos anteriores: **{', '.join(missing)}**")
+
+    clicked = st.button(
+        "🚀 Generar Horarios",
+        use_container_width=True,
+        type="primary",
+        disabled=not ready,
+    )
 
     # ── Generation ──
     if clicked and ready:
@@ -444,11 +531,14 @@ def _app():
             st.error(f"❌ Error: {exc}")
             st.code(traceback.format_exc())
 
-    # ── Downloads ──
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  STEP 5 — Downloads (only shown after generation)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     zips_data = st.session_state.get("res_zips", {})
     if zips_data:
-        st.markdown("---")
-        st.subheader("📥 Descargas")
+        _step_connector()
+        _step_card_start(5, "📥 Descargar resultados")
+
         cols = st.columns(min(len(zips_data), 4))
         for i, (name, blob) in enumerate(zips_data.items()):
             with cols[i % len(cols)]:
@@ -461,13 +551,16 @@ def _app():
                 )
                 st.caption(f"{len(blob) / 1024 / 1024:.1f} MB")
 
-    # ── Preview ──
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  STEP 6 — Preview (only shown after generation)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     wd = st.session_state.get("res_wd", "")
     res_sedes = st.session_state.get("res_sedes", [])
 
     if wd and res_sedes and os.path.exists(wd):
-        st.markdown("---")
-        st.subheader("👁️ Vista Previa")
+        _step_connector()
+        _step_card_start(6, "👁️ Vista previa")
+
         tabs = st.tabs(res_sedes)
 
         for tab, sede in zip(tabs, res_sedes):
