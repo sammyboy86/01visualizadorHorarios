@@ -560,7 +560,11 @@ def _app():
 
     if wd and res_sedes and os.path.exists(wd):
         _step_connector()
-        _step_card_start(6, "👁️ Vista previa")
+        _step_card_start(6, "👁️ Vista previa del horario")
+        st.caption(
+            "📌 Esta es solo una **vista previa** dentro del navegador. "
+            "Descargue el ZIP para obtener los archivos finales."
+        )
 
         tabs = st.tabs(res_sedes)
 
@@ -589,9 +593,18 @@ def _app():
                         "Archivo:", labels, key=f"sel_{sede}_{view}"
                     )
                     idx = labels.index(chosen)
-                    components.html(
-                        files[idx].read_text("utf-8"), height=700, scrolling=True
+                    raw_html = files[idx].read_text("utf-8")
+                    # Force white background so the schedule is readable
+                    # inside Streamlit's dark-themed iframe
+                    bg_style = (
+                        '<style>html, body { background-color: #ffffff !important; '
+                        'color: #000000 !important; }</style>'
                     )
+                    if '</head>' in raw_html:
+                        raw_html = raw_html.replace('</head>', bg_style + '</head>', 1)
+                    else:
+                        raw_html = bg_style + raw_html
+                    components.html(raw_html, height=700, scrolling=True)
 
 
 # ═════════════════════════════════════════════════════════════
