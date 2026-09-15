@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+Horarios_*/
+*.zip
+*Zone.Identifier
+*.xlsx

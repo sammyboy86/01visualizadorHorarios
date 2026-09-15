@@ -1,0 +1,86 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Horario Grupo {{ grupo }}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            table-layout: fixed;
+        }
+        th, td {
+            border: 1px solid #333;
+            text-align: center;
+            padding: 4px;
+            word-wrap: break-word;
+        }
+        th {
+            background-color: white;
+        }
+        .header {
+            background-color: white;
+            text-align: center;
+            font-weight: bold;
+        }
+        .logo-cell {
+            background-color: white;
+            width: 120px;
+            text-align: center;
+            vertical-align: middle;
+        }
+        .gray-cell {
+            background-color: #bfbfbf;
+            color: black;
+        }
+        .hora-col {
+            width: 100px;
+        }
+        .dia-col {
+            width: calc((100% - 100px) / 7);
+            background-color: white;
+        }
+    </style>
+</head>
+<body>
+    <table>
+        <tr>
+            <td class="logo-cell" rowspan="2">
+                <img src="{{ logo }}" alt="Logo UTC" style="max-width:100px; height:auto;">
+            </td>
+            <td colspan="7" class="header">{{ titulo_turno }}</td>
+        </tr>
+        <tr>
+            <td colspan="7" class="header">GRUPO: {{ grupo }}</td>
+        </tr>
+    </table>
+    <br>
+    <table>
+        <tr>
+            <th class="hora-col">Hora</th>
+            {% for dia in dias %}
+            <th class="dia-col">{{ dia }}</th>
+            {% endfor %}
+        </tr>
+        {% for fila in filas %}
+        <tr>
+            <td class="hora-col">{{ fila.hora }}</td>
+            {% for dia in dias %}
+                {% set celda = fila.celdas | selectattr("dia", "equalto", dia) | list | first %}
+                {% if celda is defined %}
+                    {% if celda.contenido %}
+                        <td class="gray-cell dia-col" rowspan="{{ celda.rowspan }}">{{ celda.contenido|safe }}</td>
+                    {% elif celda.contenido == "" %}
+                        <td class="dia-col"></td>
+                    {% endif %}
+                {% endif %}
+            {% endfor %}
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>
