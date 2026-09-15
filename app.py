@@ -95,25 +95,25 @@ def _inject_css():
     [data-testid="collapsedControl"] { display: none !important; }
 
     /* ── Login ── */
-    .login-wrap { display:flex; justify-content:center; padding-top:6vh; }
+    .login-wrap { display:flex; justify-content:center; padding-top:8vh; }
     .login-card {
         background: linear-gradient(145deg, rgba(26,29,41,.97), rgba(14,17,23,.99));
         border: 1px solid rgba(79,139,249,.2);
-        border-radius: 24px; padding: 2.5rem 2rem 1rem;
-        width:100%; max-width:420px;
+        border-radius: 24px; padding: 3rem 2.5rem 2rem;
+        width:100%; max-width:440px;
         box-shadow: 0 24px 64px rgba(0,0,0,.55), 0 0 48px rgba(79,139,249,.08);
         text-align: center;
     }
     .login-card img {
-        width:72px; margin-bottom:1rem;
+        width:88px; margin-bottom:1.4rem;
         filter: drop-shadow(0 4px 12px rgba(79,139,249,.25));
     }
     .login-card .lc-title {
-        font-family:'Outfit',sans-serif; font-size:1.35rem;
-        font-weight:600; color:#fafafa; margin:0 0 .2rem;
+        font-family:'Outfit',sans-serif; font-size:1.5rem;
+        font-weight:600; color:#fafafa; margin:0 0 .4rem;
     }
     .login-card .lc-sub {
-        font-size:.82rem; color:#6b7280; margin:0 0 1.6rem;
+        font-size:.88rem; color:#6b7280; margin:0 0 2rem;
     }
 
     /* ── App header ── */
@@ -136,7 +136,8 @@ def _inject_css():
         border: 1px solid rgba(79,139,249,.12);
         border-radius: 16px;
         padding: 1.5rem 1.8rem 1.2rem;
-        margin-bottom: 0;
+        margin-top: 0.6rem;
+        margin-bottom: 0.4rem;
     }
     .step-header {
         display: flex; align-items: center; gap: .75rem;
@@ -157,10 +158,10 @@ def _inject_css():
     }
     .step-connector {
         display: flex; justify-content: center;
-        padding: .15rem 0;
+        padding: .4rem 0;
     }
     .step-connector .line {
-        width: 2px; height: 28px;
+        width: 2px; height: 36px;
         background: linear-gradient(180deg, rgba(79,139,249,.35), rgba(79,139,249,.08));
         border-radius: 1px;
     }
@@ -422,7 +423,7 @@ def _app():
         )
     with col_b:
         secciones = st.file_uploader(
-            "Resultados Secciones (.xlsx) — opcional",
+            "Resultados Secciones (.xlsx) ",
             type=["xlsx"],
             key="up_sec",
             help="Resultados - Secciones - Proceso NNN.xlsx · salones por día",
