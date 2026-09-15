@@ -95,25 +95,29 @@ def _inject_css():
     [data-testid="collapsedControl"] { display: none !important; }
 
     /* ── Login ── */
-    .login-wrap { display:flex; justify-content:center; padding-top:8vh; }
+    .login-wrap {
+        display:flex; justify-content:center;
+        padding-top:10vh; padding-bottom:4vh;
+    }
     .login-card {
         background: linear-gradient(145deg, rgba(26,29,41,.97), rgba(14,17,23,.99));
         border: 1px solid rgba(79,139,249,.2);
-        border-radius: 24px; padding: 3rem 2.5rem 2rem;
-        width:100%; max-width:440px;
+        border-radius: 24px;
+        padding: 3.5rem 3rem 2.5rem;
+        width:100%; max-width:480px;
         box-shadow: 0 24px 64px rgba(0,0,0,.55), 0 0 48px rgba(79,139,249,.08);
         text-align: center;
     }
     .login-card img {
-        width:88px; margin-bottom:1.4rem;
+        width:96px; margin-bottom:1.6rem;
         filter: drop-shadow(0 4px 12px rgba(79,139,249,.25));
     }
     .login-card .lc-title {
-        font-family:'Outfit',sans-serif; font-size:1.5rem;
-        font-weight:600; color:#fafafa; margin:0 0 .4rem;
+        font-family:'Outfit',sans-serif; font-size:1.6rem;
+        font-weight:600; color:#fafafa; margin:0 0 .5rem;
     }
     .login-card .lc-sub {
-        font-size:.88rem; color:#6b7280; margin:0 0 2rem;
+        font-size:.92rem; color:#6b7280; margin:0 0 2.2rem;
     }
 
     /* ── App header ── */
@@ -223,38 +227,40 @@ def _logged_in() -> bool:
 def _login_page():
     # Hide sidebar & top bar on the login screen
     st.markdown(
-        '<style>section[data-testid="stSidebar"]{display:none}'
-        "header{display:none}</style>",
+        '<style>'
+        'section[data-testid="stSidebar"]{display:none}'
+        'header{display:none}'
+        '</style>',
         unsafe_allow_html=True,
     )
 
     logo = _logo_b64()
-    _, col, _ = st.columns([1.2, 1, 1.2])
-    with col:
-        st.markdown(
-            f"""
-            <div class="login-wrap"><div class="login-card">
-                <img src="data:image/png;base64,{logo}" alt="UTC">
-                <div class="lc-title">Visualizador de Horarios</div>
-                <div class="lc-sub">Programación Académica · UTC</div>
-            </div></div>""",
-            unsafe_allow_html=True,
-        )
+    st.markdown(
+        f"""
+        <div class="login-wrap"><div class="login-card">
+            <img src="data:image/png;base64,{logo}" alt="UTC">
+            <div class="lc-title">Visualizador de Horarios</div>
+            <div class="lc-sub">Programación Académica · UTC</div>
+        </div></div>""",
+        unsafe_allow_html=True,
+    )
 
-        with st.form("login_form", clear_on_submit=False):
-            user = st.text_input("👤 Usuario", value="programacion_academica")
-            pwd = st.text_input("🔒 Contraseña", type="password")
-            go = st.form_submit_button(
-                "Iniciar Sesión", use_container_width=True, type="primary"
-            )
-            if go:
-                user_clean = (user or "").strip().lower()
-                pwd_clean = (pwd or "").strip()
-                if user_clean in ("", AUTH_USER.lower()) and pwd_clean in AUTH_PASSWORDS:
-                    st.session_state.auth = True
-                    st.rerun()
-                else:
-                    st.error("Credenciales incorrectas. Verifique usuario y contraseña.")
+    with st.form("login_form", clear_on_submit=False):
+        user = st.text_input("👤 Usuario", value="programacion_academica")
+        st.markdown("")  # spacer
+        pwd = st.text_input("🔒 Contraseña", type="password")
+        st.markdown("")  # spacer
+        go = st.form_submit_button(
+            "Iniciar Sesión", use_container_width=True, type="primary"
+        )
+        if go:
+            user_clean = (user or "").strip().lower()
+            pwd_clean = (pwd or "").strip()
+            if user_clean in ("", AUTH_USER.lower()) and pwd_clean in AUTH_PASSWORDS:
+                st.session_state.auth = True
+                st.rerun()
+            else:
+                st.error("Credenciales incorrectas. Verifique usuario y contraseña.")
 
 
 # ═════════════════════════════════════════════════════════════
