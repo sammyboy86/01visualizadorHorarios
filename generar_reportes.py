@@ -581,7 +581,7 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
 
             cleanup(grid)
             # Nombre de archivo basado en ID DOCENTE para evitar colisiones
-            safe = re.sub(r"[\/*?\"<>| ]","_", str(doc_id))
+            safe = re.sub(r"[\/*?\"<>| ]","_", f"{doc_id}_{doc_nombre}")
             # AJUSTE: Mantiene el encabezado original con el nombre del docente
             turno_doc = dfd["JORNADA"].mode().iat[0] if not dfd["JORNADA"].isna().all() else "MIXTO"
             html = template.render(logo=logo_b64, titulo_turno=f"TURNO: {turno_doc} - {sede_actual}",
