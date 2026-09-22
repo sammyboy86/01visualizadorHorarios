@@ -528,9 +528,15 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
             (out_g / fname).write_text(html, "utf8")
 
         # ===================== POR DOCENTE (BLOQUES visibles) =================
-        for doc, dfd in df_sede.groupby("DOCENTE_NOMBRE"):
-            if pd.isna(doc):
+        # AJUSTE: se agrupa por ID DOCENTE (único) y no por NOMBRE DOCENTE para evitar
+        # colisiones entre docentes distintos que compartan el mismo nombre.
+        for doc_id, dfd in df_sede.groupby("DOCENTE_ID"):
+            if pd.isna(doc_id):
                 continue
+
+            # Nombre visible: el más frecuente dentro del grupo (respaldo: el propio ID)
+            nombres_validos = dfd["DOCENTE_NOMBRE"].dropna()
+            doc_nombre = nombres_validos.mode().iat[0] if not nombres_validos.empty else str(doc_id)
 
             # AJUSTE: Franja horaria desde las 07:00
             h_ini = "07:00"
@@ -574,11 +580,12 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
                 place(grid, blks, i, span, dia, txt)
 
             cleanup(grid)
-            safe = re.sub(r"[\/*?\"<>| ]","_", str(doc))
-            # AJUSTE: Mantiene el encabezado original
+            # Nombre de archivo basado en ID DOCENTE para evitar colisiones
+            safe = re.sub(r"[\/*?\"<>| ]","_", str(doc_id))
+            # AJUSTE: Mantiene el encabezado original con el nombre del docente
             turno_doc = dfd["JORNADA"].mode().iat[0] if not dfd["JORNADA"].isna().all() else "MIXTO"
             html = template.render(logo=logo_b64, titulo_turno=f"TURNO: {turno_doc} - {sede_actual}",
-                                   grupo=str(doc), dias=list(DIA_LETRA.values()), filas=grid).replace("GRUPO:","DOCENTE:")
+                                   grupo=str(doc_nombre), dias=list(DIA_LETRA.values()), filas=grid).replace("GRUPO:","DOCENTE:")
             (out_d / f"{safe}_{sede_slug}.html").write_text(html, "utf8")
 
         # Empaquetar sede
