@@ -584,12 +584,18 @@ def _app():
 
                 grp_files = sorted(parent.rglob("grupos/*.html"))
                 doc_files = sorted(parent.rglob("docentes/*.html"))
+                sal_files = sorted(parent.rglob("salones/*.html"))
 
                 view = st.radio(
-                    "Ver:", ["Bloques / Grupos", "Docentes"],
+                    "Ver:", ["Bloques / Grupos", "Docentes", "Salones"],
                     horizontal=True, key=f"v_{sede}",
                 )
-                files = grp_files if view == "Bloques / Grupos" else doc_files
+                if view == "Bloques / Grupos":
+                    files = grp_files
+                elif view == "Docentes":
+                    files = doc_files
+                else:
+                    files = sal_files
 
                 if not files:
                     st.info(f"No hay archivos de {view.lower()}.")

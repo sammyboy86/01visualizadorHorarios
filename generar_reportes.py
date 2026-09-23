@@ -513,9 +513,9 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
     for sede_actual in sedes:
         sede_slug = re.sub(r"[\/*?\"<>| ]", "_", sede_actual)
         carpeta = pathlib.Path(f"salida_{sede_slug}")
-        out_g = carpeta / "grupos"; out_d = carpeta / "docentes"
+        out_g = carpeta / "grupos"; out_d = carpeta / "docentes"; out_s = carpeta / "salones"
         shutil.rmtree(carpeta, ignore_errors=True)
-        out_g.mkdir(parents=True); out_d.mkdir()
+        out_g.mkdir(parents=True); out_d.mkdir(); out_s.mkdir()
 
         df_sede = df[df["SEDE"].astype(str) == str(sede_actual)].copy()
         base_to_map = mapa_por_sede.get(str(sede_actual), {})
@@ -631,11 +631,67 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
                                    grupo=str(doc_nombre), dias=list(DIA_LETRA.values()), filas=grid).replace("GRUPO:","DOCENTE:")
             (out_d / f"{safe}_{sede_slug}.html").write_text(html, "utf8")
 
+        # ===================== POR SALÓN ====================================
+        # Agrupa todas las sesiones por salón (sala + edificio) y genera un
+        # HTML de grilla semanal por cada salón, mostrando bloques UTC,
+        # asignaturas y docentes.
+        salon_sessions = defaultdict(list)  # {salon_texto: [(dia_letra, start, end, row), ...]}
+        for _, r in df_sede.iterrows():
+            liga_r = str(r.get("LIGA")).strip()
+            for (d, start, end) in parse_group_schedule(r["GROUP_SCHEDULE"]):
+                sala_dia = salones_map.get((str(sede_actual), liga_r, d))
+                if sala_dia is None and pd.notna(r.get("SALA")):
+                    sala_dia = _formato_sala(r.get("SALA"), r.get("EDIFICIO"))
+                if not sala_dia:
+                    continue
+                salon_sessions[sala_dia].append((d, start, end, r))
+
+        for salon_texto, sesiones in sorted(salon_sessions.items()):
+            h_ini = "07:00"
+            _maxs = [end for (_, _, end, _) in sesiones]
+            h_fin = max(max(_maxs), "22:00") if _maxs else "22:00"
+
+            grid = make_grid(h_ini, h_fin); blks = list(bloques_30(h_ini, h_fin))
+
+            content_map = defaultdict(lambda: {"bloques": set(), "asig": set(), "alias": set(), "docentes": set()})
+            for (d, start, end, r) in sesiones:
+                key = (DIA_LETRA.get(d, d), start, end)
+                utc_blocks = [tok.strip() for tok in str(r.get("UTC_BLOCK", "")).split(",") if str(tok).strip()]
+                for vis in utc_blocks:
+                    content_map[key]["bloques"].add(vis)
+                if pd.notna(r.get("ASIGNATURA")): content_map[key]["asig"].add(str(r.get("ASIGNATURA")))
+                if pd.notna(r.get("NOMBRE")):     content_map[key]["alias"].add(str(r.get("NOMBRE")))
+                if pd.notna(r.get("DOCENTE_NOMBRE")): content_map[key]["docentes"].add(str(r.get("DOCENTE_NOMBRE")))
+
+            for (dia, start, end), info in content_map.items():
+                try:
+                    i = next(k for k,b in enumerate(blks) if b.startswith(start))
+                except StopIteration:
+                    continue
+                span = span_30m(start, end)
+                bloques_fmt = ", ".join(sorted(info["bloques"])) if info["bloques"] else "(sin bloque)"
+                txt = (
+                    f"<b>{bloques_fmt}</b><br>"
+                    f"{', '.join(sorted(info['asig']))}<br>"
+                    f"{', '.join(sorted(info['alias']))}<br>"
+                    f"{docente_fmt(list(info['docentes']))}"
+                )
+                place(grid, blks, i, span, dia, txt)
+
+            cleanup(grid)
+            safe_salon = re.sub(r"[\\/*?\"<>| ]", "_", salon_texto)
+            fname = f"{sede_slug}_{safe_salon}.html"
+            turno_salon = df_sede["JORNADA"].mode().iat[0] if not df_sede["JORNADA"].isna().all() else "MIXTO"
+            html = template.render(logo=logo_b64, titulo_turno=f"TURNO: {turno_salon} - {sede_actual}",
+                                   grupo=str(salon_texto), dias=list(DIA_LETRA.values()), filas=grid).replace("GRUPO:", "SALÓN:")
+            (out_s / fname).write_text(html, "utf8")
+
         # Empaquetar sede
         zip_name = f"UTC_Reportes_SEDE_{sede_slug}.zip"
         with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED) as z:
             for f in out_g.glob("*.html"): z.write(f, arcname=f"grupos/{f.name}")
             for f in out_d.glob("*.html"): z.write(f, arcname=f"docentes/{f.name}")
+            for f in out_s.glob("*.html"): z.write(f, arcname=f"salones/{f.name}")
 
     # AJUSTE: Generación de reportes finales (Mapeo y Packages)
     generar_reporte_mapeo_bloques(df.copy(), "Mapeo_Bloques_Transformados.xlsx")
