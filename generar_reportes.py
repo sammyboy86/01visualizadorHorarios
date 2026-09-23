@@ -68,12 +68,13 @@ def _is_skipped_xlsx(name: str) -> bool:
     low = name.lower()
     return any(k in low for k in _SKIP_XLSX_KEYWORDS)
 
-def find_sede_report_excels() -> list:
+def find_sede_report_excels(workdir=None) -> list:
     """Reportes individuales por sede: 'Reporte Horarios y Paquetes - Proceso NNN.xlsx'."""
     import glob
+    wd = workdir or "."
     files = []
-    for f in glob.glob(PATRON_REPORTE_SEDE):
-        if f.startswith("~$"):
+    for f in glob.glob(os.path.join(wd, PATRON_REPORTE_SEDE)):
+        if os.path.basename(f).startswith("~$"):
             continue
         files.append(f)
     files.sort()
@@ -101,15 +102,16 @@ def _formato_sala(sala, edificio=None) -> str:
         return f"{sala_str} - {edif_str}"
     return sala_str or edif_str
 
-def find_secciones_excels() -> list:
+def find_secciones_excels(workdir=None) -> list:
     """Reporte(s) 'Resultados - Secciones - Proceso NNN.xlsx': trae, fila por fila,
     el salón real de cada sesión (LIGA + día) y su edificio, a diferencia del salón único por liga
     que trae 'Reporte Horarios y Paquetes'."""
     import glob
-    files = [f for f in glob.glob(PATRON_SECCIONES) if not os.path.basename(f).startswith("~$")]
+    wd = workdir or "."
+    files = [f for f in glob.glob(os.path.join(wd, PATRON_SECCIONES)) if not os.path.basename(f).startswith("~$")]
     if not files:
         files = [
-            f for f in glob.glob("*.xlsx")
+            f for f in glob.glob(os.path.join(wd, "*.xlsx"))
             if not os.path.basename(f).startswith("~$") and "secciones" in os.path.basename(f).lower()
         ]
     files.sort()
@@ -118,8 +120,8 @@ def find_secciones_excels() -> list:
 # AJUSTE: mapa (SEDE, LIGA, día) -> salón real (+ edificio si existe), construido a partir del reporte de Secciones.
 # Es el complemento que le falta a "Reporte Horarios y Paquetes" para poder mostrar un
 # salón distinto por día cuando la liga efectivamente cambia de salón entre sesiones.
-def load_salones_por_liga_dia(sedes_filtro=None) -> dict:
-    archivos = find_secciones_excels()
+def load_salones_por_liga_dia(sedes_filtro=None, workdir=None) -> dict:
+    archivos = find_secciones_excels(workdir=workdir)
     if not archivos:
         logging.warning(
             "No se encontró el reporte de Secciones (patrón: %s). Se usará el salón único "
@@ -187,13 +189,17 @@ def load_salones_por_liga_dia(sedes_filtro=None) -> dict:
     )
     return mapa
 
-def find_input_excel(prefer: str = None) -> str:
+def find_input_excel(prefer: str = None, workdir=None) -> str:
     import glob
-    if prefer and os.path.exists(prefer):
-        return prefer
+    wd = workdir or "."
+    if prefer:
+        prefer_abs = prefer if os.path.isabs(prefer) else os.path.join(wd, prefer)
+        if os.path.exists(prefer_abs):
+            return prefer_abs
     candidates = []
-    for f in glob.glob("*.xlsx"):
-        if f.startswith("~$") or _is_skipped_xlsx(f):
+    for f in glob.glob(os.path.join(wd, "*.xlsx")):
+        basename = os.path.basename(f)
+        if basename.startswith("~$") or _is_skipped_xlsx(basename):
             continue
         candidates.append(f)
     if not candidates:
@@ -264,7 +270,7 @@ def _sedes_en_archivo(path: str) -> set:
     series = pd.read_excel(path, usecols=[sede_col], engine="openpyxl")[sede_col]
     return set(series.dropna().astype(str).unique())
 
-def load_data_unificado(path_entrada=None, sedes_filtro=None) -> pd.DataFrame:
+def load_data_unificado(path_entrada=None, sedes_filtro=None, workdir=None) -> pd.DataFrame:
     """Carga reportes por sede y los concatena; si no hay, usa un Excel consolidado.
 
     sedes_filtro: set/list de códigos de plantel; solo carga archivos de esas sedes.
@@ -272,7 +278,7 @@ def load_data_unificado(path_entrada=None, sedes_filtro=None) -> pd.DataFrame:
     if sedes_filtro is not None:
         sedes_filtro = {str(s) for s in sedes_filtro}
 
-    sede_files = find_sede_report_excels()
+    sede_files = find_sede_report_excels(workdir=workdir)
     if sede_files:
         dfs = []
         for f in sede_files:
@@ -306,7 +312,7 @@ def load_data_unificado(path_entrada=None, sedes_filtro=None) -> pd.DataFrame:
             raise ValueError("Todos los reportes por sede están vacíos.")
         return pd.concat(dfs, ignore_index=True)
 
-    path = path_entrada or find_input_excel(RUTA_ENTRADA)
+    path = path_entrada or find_input_excel(RUTA_ENTRADA, workdir=workdir)
     logging.info("Sin reportes por sede; usando consolidado: %s", path)
     df = load_data(path)
     if sedes_filtro:
@@ -483,14 +489,24 @@ def generar_reporte_packages_expandidos(df_base: pd.DataFrame, out_path: str):
     return out_path
 
 # ---------- Generador principal ----------
-def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_PATH, sedes_filtro=None):
+def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_PATH, sedes_filtro=None, workdir=None, loader=None):
+    wd = workdir or "."
+    # Resolver rutas relativas de template y logo respecto al workdir
+    if not os.path.isabs(template_path):
+        template_path = os.path.join(wd, template_path)
+    if not os.path.isabs(logo_path):
+        logo_path = os.path.join(wd, logo_path)
+
     if path_entrada:
+        if not os.path.isabs(path_entrada):
+            path_entrada = os.path.join(wd, path_entrada)
         df = load_data(path_entrada)
         if sedes_filtro is not None:
             sedes_f = {str(s) for s in sedes_filtro}
             df = df[df["SEDE"].astype(str).isin(sedes_f)].copy()
     else:
-        df = load_data_unificado(sedes_filtro=sedes_filtro)
+        load_fn = loader or load_data_unificado
+        df = load_fn(path_entrada, sedes_filtro=sedes_filtro, workdir=wd)
 
     if "UTC_BLOCK" not in df.columns:
         for c in list(df.columns):
@@ -502,7 +518,7 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
 
     # AJUSTE: salón real por (SEDE, LIGA, día), tomado del reporte de Secciones.
     # Complementa a "Reporte Horarios y Paquetes", que solo trae un salón por liga.
-    salones_map = load_salones_por_liga_dia(sedes_filtro=sedes_filtro)
+    salones_map = load_salones_por_liga_dia(sedes_filtro=sedes_filtro, workdir=wd)
 
     template = jinja2.Template(open(template_path, encoding="utf8").read())
     logo_b64 = "data:image/png;base64," + base64.b64encode(open(logo_path,"rb").read()).decode()
@@ -512,7 +528,7 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
 
     for sede_actual in sedes:
         sede_slug = re.sub(r"[\/*?\"<>| ]", "_", sede_actual)
-        carpeta = pathlib.Path(f"salida_{sede_slug}")
+        carpeta = pathlib.Path(wd) / f"salida_{sede_slug}"
         out_g = carpeta / "grupos"; out_d = carpeta / "docentes"; out_s = carpeta / "salones"
         shutil.rmtree(carpeta, ignore_errors=True)
         out_g.mkdir(parents=True); out_d.mkdir(); out_s.mkdir()
@@ -687,16 +703,16 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
             (out_s / fname).write_text(html, "utf8")
 
         # Empaquetar sede
-        zip_name = f"UTC_Reportes_SEDE_{sede_slug}.zip"
+        zip_name = str(pathlib.Path(wd) / f"UTC_Reportes_SEDE_{sede_slug}.zip")
         with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED) as z:
             for f in out_g.glob("*.html"): z.write(f, arcname=f"grupos/{f.name}")
             for f in out_d.glob("*.html"): z.write(f, arcname=f"docentes/{f.name}")
             for f in out_s.glob("*.html"): z.write(f, arcname=f"salones/{f.name}")
 
     # AJUSTE: Generación de reportes finales (Mapeo y Packages)
-    generar_reporte_mapeo_bloques(df.copy(), "Mapeo_Bloques_Transformados.xlsx")
+    generar_reporte_mapeo_bloques(df.copy(), str(pathlib.Path(wd) / "Mapeo_Bloques_Transformados.xlsx"))
     try:
-        generar_reporte_packages_expandidos(df.copy(), "Reporte_Packages_Expandidos.xlsx")
+        generar_reporte_packages_expandidos(df.copy(), str(pathlib.Path(wd) / "Reporte_Packages_Expandidos.xlsx"))
     except Exception as e:
         print("Aviso: no se pudo generar Reporte_Packages_Expandidos.xlsx:", e)
 

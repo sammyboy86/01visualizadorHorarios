@@ -14,7 +14,6 @@ import streamlit.components.v1 as components
 import os
 import sys
 import tempfile
-import threading
 import shutil
 import pathlib
 import zipfile
@@ -31,18 +30,7 @@ if SCRIPT_DIR not in sys.path:
 
 import generar_reportes as gen  # noqa: E402
 
-# Preserve the *true* originals across Streamlit reruns.  Storing them
-# on the module object itself guarantees we never accidentally save a
-# monkey-patched version even if a previous run crashed mid-generation.
-if not hasattr(gen, "_st_orig_load_data_unificado"):
-    gen._st_orig_load_data_unificado = gen.load_data_unificado
-if not hasattr(gen, "_st_orig_find_input_excel"):
-    gen._st_orig_find_input_excel = gen.find_input_excel
 
-_ORIG_LOAD = gen._st_orig_load_data_unificado
-_ORIG_FIND = gen._st_orig_find_input_excel
-
-_GEN_LOCK = threading.Lock()
 
 # ── Page config (must be first Streamlit call) ──────────────
 st.set_page_config(
@@ -308,85 +296,70 @@ def _prepare_workdir(reporte, secciones=None) -> str:
 # ═════════════════════════════════════════════════════════════
 def _run(wd: str, sedes: set, grupos: list, bar, status) -> list[str]:
     """Execute schedule generation.  Returns list of absolute ZIP paths."""
-    if not _GEN_LOCK.acquire(blocking=False):
-        status.warning("⏳ Otro usuario está generando horarios. Esperando…")
-        _GEN_LOCK.acquire()  # block until available
+    total = len(grupos) + 1  # +1 for the packaging step
+    wdp = pathlib.Path(wd)
 
-    saved = os.getcwd()
-    gen.load_data_unificado = _ORIG_LOAD
-    gen.find_input_excel = _ORIG_FIND
+    # ── per-grupo iteration ──
+    for i, g in enumerate(grupos):
+        bar.progress(i / total, text=f"Generando {g['nombre']}…")
+        status.info(
+            f"⏳ **{g['nombre']}** · Sedes: {', '.join(sorted(sedes))}"
+        )
 
-    try:
-        os.chdir(wd)
-        total = len(grupos) + 1  # +1 for the packaging step
+        # Build a loader that filters by SEMANAS and delegates to the real loader
+        def _make_loader(sem, vac, sed):
+            def _load(path_entrada=None, sedes_filtro=None, workdir=None):
+                df = gen.load_data_unificado(path_entrada, sedes_filtro=sed, workdir=workdir)
+                if "SEMANAS" in df.columns:
+                    mask = df["SEMANAS"].astype(str).str.strip().isin(sem)
+                    if vac:
+                        mask = mask | df["SEMANAS"].isna()
+                    df = df[mask].copy()
+                return df
+            return _load
 
-        # ── per-grupo iteration ──
-        for i, g in enumerate(grupos):
-            bar.progress(i / total, text=f"Generando {g['nombre']}…")
-            status.info(
-                f"⏳ **{g['nombre']}** · Sedes: {', '.join(sorted(sedes))}"
-            )
+        loader = _make_loader(g["filtro"], g["vacias"], sedes)
+        gen.generar_reportes(sedes_filtro=sedes, workdir=wd, loader=loader)
 
-            # Build a *new* loader for this iteration (closure captures values)
-            def _make_loader(sem, vac, sed):
-                def _load(path_entrada=None, sedes_filtro=None):
-                    df = _ORIG_LOAD(path_entrada, sedes_filtro=sed)
-                    if "SEMANAS" in df.columns:
-                        mask = df["SEMANAS"].astype(str).str.strip().isin(sem)
-                        if vac:
-                            mask = mask | df["SEMANAS"].isna()
-                        df = df[mask].copy()
-                    return df
-                return _load
-
-            gen.load_data_unificado = _make_loader(g["filtro"], g["vacias"], sedes)
-            gen.generar_reportes(sedes_filtro=sedes)
-
-            # Rename output folders → add suffix
-            for sede in sedes:
-                slug = re.sub(r'[\\/*?"<>| ]', "_", sede)
-                src = pathlib.Path(f"salida_{slug}")
-                dst = pathlib.Path(f"horarios_{slug}_{g['id']}")
-                if dst.exists():
-                    shutil.rmtree(dst)
-                if src.exists():
-                    src.rename(dst)
-                for zp in pathlib.Path(".").glob(f"UTC_Reportes_SEDE_{slug}.zip"):
-                    zp.unlink()
-
-        # ── package by sede ──
-        bar.progress((total - 1) / total, text="Empaquetando…")
-        status.info("📦 Empaquetando archivos…")
-
-        zips: list[str] = []
+        # Rename output folders → add suffix
         for sede in sedes:
             slug = re.sub(r'[\\/*?"<>| ]', "_", sede)
-            parent = pathlib.Path(f"Horarios_{slug}")
-            if parent.exists():
-                shutil.rmtree(parent)
-            parent.mkdir()
+            src = wdp / f"salida_{slug}"
+            dst = wdp / f"horarios_{slug}_{g['id']}"
+            if dst.exists():
+                shutil.rmtree(dst)
+            if src.exists():
+                src.rename(dst)
+            for zp in wdp.glob(f"UTC_Reportes_SEDE_{slug}.zip"):
+                zp.unlink()
 
-            for g in grupos:
-                src = pathlib.Path(f"horarios_{slug}_{g['id']}")
-                if src.exists():
-                    src.rename(parent / src.name)
+    # ── package by sede ──
+    bar.progress((total - 1) / total, text="Empaquetando…")
+    status.info("📦 Empaquetando archivos…")
 
-            zpath = pathlib.Path(f"Horarios_{slug}.zip")
-            if zpath.exists():
-                zpath.unlink()
-            with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
-                for f in parent.rglob("*"):
-                    zf.write(f, f.relative_to(parent.parent))
-            zips.append(str(zpath.resolve()))
+    zips: list[str] = []
+    for sede in sedes:
+        slug = re.sub(r'[\\/*?"<>| ]', "_", sede)
+        parent = wdp / f"Horarios_{slug}"
+        if parent.exists():
+            shutil.rmtree(parent)
+        parent.mkdir()
 
-        bar.progress(1.0, text="✅ Completado")
-        return zips
+        for g in grupos:
+            src = wdp / f"horarios_{slug}_{g['id']}"
+            if src.exists():
+                src.rename(parent / src.name)
 
-    finally:
-        os.chdir(saved)
-        gen.load_data_unificado = _ORIG_LOAD
-        gen.find_input_excel = _ORIG_FIND
-        _GEN_LOCK.release()
+        zpath = wdp / f"Horarios_{slug}.zip"
+        if zpath.exists():
+            zpath.unlink()
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in parent.rglob("*"):
+                zf.write(f, f.relative_to(parent.parent))
+        zips.append(str(zpath.resolve()))
+
+    bar.progress(1.0, text="✅ Completado")
+    return zips
 
 
 # ═════════════════════════════════════════════════════════════
@@ -410,6 +383,10 @@ def _app():
     with rcol:
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("🚪 Cerrar Sesión", use_container_width=True):
+            # Limpiar directorio temporal antes de cerrar sesión
+            _wd = st.session_state.get("workdir", "")
+            if _wd and os.path.exists(_wd):
+                shutil.rmtree(_wd, ignore_errors=True)
             for k in list(st.session_state.keys()):
                 del st.session_state[k]
             st.rerun()
