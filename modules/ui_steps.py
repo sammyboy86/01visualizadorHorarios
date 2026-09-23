@@ -176,18 +176,22 @@ def step_5_downloads():
     render_step_connector()
     render_step_card_start(5, "📥 Descargar resultados")
 
-    # Banner de confirmación si se acaba de solicitar una descarga
-    active_dl = st.session_state.get("just_downloaded")
-    if active_dl and active_dl in zips_data:
-        val = zips_data[active_dl]
+    # Extraer y CONSUMIR el disparador del modal para que solo se ejecute una vez por clic
+    target_dl = st.session_state.pop("trigger_download_modal", None)
+
+    # Banner informativo de la última descarga solicitada
+    last_dl = st.session_state.get("last_downloaded")
+    if last_dl and last_dl in zips_data:
+        val = zips_data[last_dl]
         size_mb = os.path.getsize(val) / (1024 * 1024) if isinstance(val, str) and os.path.exists(val) else len(val) / (1024 * 1024)
         st.success(
-            f"📥 **Descarga en proceso:** Se ha solicitado **{active_dl}** ({size_mb:.1f} MB). "
+            f"📥 **Descarga en proceso:** Se ha solicitado **{last_dl}** ({size_mb:.1f} MB). "
             f"El archivo se está guardando en tu equipo."
         )
 
     def _on_download_click(fname):
-        st.session_state.just_downloaded = fname
+        st.session_state.trigger_download_modal = fname
+        st.session_state.last_downloaded = fname
 
     cols = st.columns(min(len(zips_data), 4))
     for i, (name, val) in enumerate(zips_data.items()):
@@ -199,7 +203,7 @@ def step_5_downloads():
             else:
                 dl_bytes = val
 
-            clicked = st.download_button(
+            st.download_button(
                 f"⬇️ {name}",
                 data=dl_bytes,
                 file_name=name,
@@ -210,12 +214,10 @@ def step_5_downloads():
                 args=(name,),
             )
             st.caption(f"{size_mb:.1f} MB")
-            if clicked:
-                st.session_state.just_downloaded = name
 
-    # Mostrar modal dialog interactivo si hay una descarga activa
-    if active_dl and active_dl in zips_data:
-        show_download_dialog(active_dl, zips_data[active_dl])
+    # Mostrar modal dialog interactivo SOLO si fue disparado en este clic específico
+    if target_dl and target_dl in zips_data:
+        show_download_dialog(target_dl, zips_data[target_dl])
 
 
 def step_6_preview():
