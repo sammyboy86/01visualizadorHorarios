@@ -432,7 +432,7 @@ def _app():
             "Resultados Secciones (.xlsx) ",
             type=["xlsx"],
             key="up_sec",
-            help="Resultados - Secciones - Proceso NNN.xlsx · salones por día",
+            help="Resultados - Secciones - Proceso NNN.xlsx · salones y edificios por día",
         )
 
     if reporte:

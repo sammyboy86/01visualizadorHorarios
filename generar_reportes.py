@@ -79,16 +79,43 @@ def find_sede_report_excels() -> list:
     files.sort()
     return files
 
+def _clean_str(val) -> str:
+    if val is None or pd.isna(val):
+        return ""
+    if isinstance(val, float) and val.is_integer():
+        return str(int(val))
+    s = str(val).strip()
+    if s.lower() in ("nan", "none", "null"):
+        return ""
+    if s.endswith(".0"):
+        try:
+            return str(int(float(s)))
+        except ValueError:
+            pass
+    return s
+
+def _formato_sala(sala, edificio=None) -> str:
+    sala_str = _clean_str(sala)
+    edif_str = _clean_str(edificio)
+    if sala_str and edif_str:
+        return f"{sala_str} - {edif_str}"
+    return sala_str or edif_str
+
 def find_secciones_excels() -> list:
     """Reporte(s) 'Resultados - Secciones - Proceso NNN.xlsx': trae, fila por fila,
-    el salón real de cada sesión (LIGA + día), a diferencia del salón único por liga
+    el salón real de cada sesión (LIGA + día) y su edificio, a diferencia del salón único por liga
     que trae 'Reporte Horarios y Paquetes'."""
     import glob
     files = [f for f in glob.glob(PATRON_SECCIONES) if not os.path.basename(f).startswith("~$")]
+    if not files:
+        files = [
+            f for f in glob.glob("*.xlsx")
+            if not os.path.basename(f).startswith("~$") and "secciones" in os.path.basename(f).lower()
+        ]
     files.sort()
     return files
 
-# AJUSTE: mapa (SEDE, LIGA, día) -> salón real, construido a partir del reporte de Secciones.
+# AJUSTE: mapa (SEDE, LIGA, día) -> salón real (+ edificio si existe), construido a partir del reporte de Secciones.
 # Es el complemento que le falta a "Reporte Horarios y Paquetes" para poder mostrar un
 # salón distinto por día cuando la liga efectivamente cambia de salón entre sesiones.
 def load_salones_por_liga_dia(sedes_filtro=None) -> dict:
@@ -109,12 +136,19 @@ def load_salones_por_liga_dia(sedes_filtro=None) -> dict:
 
     for f in archivos:
         df = pd.read_excel(f, engine="openpyxl")
+        df.columns = [str(c).strip() for c in df.columns]
         faltantes = {"SEDE", "LIGAS", "DIA", "SALA"} - set(df.columns)
         if faltantes:
             logging.warning("Secciones %s: faltan columnas %s; se omite este archivo.", f, faltantes)
             continue
         if sedes_f:
             df = df[df["SEDE"].astype(str).isin(sedes_f)]
+
+        col_edificio = next(
+            (c for c in df.columns if str(c).strip().upper() in ("EDIFICIO", "EDIFICIO ASIGNADO")),
+            None
+        )
+
         for _, r in df.iterrows():
             total_filas += 1
             sala = r.get("SALA")
@@ -130,19 +164,24 @@ def load_salones_por_liga_dia(sedes_filtro=None) -> dict:
             if letra is None:
                 continue
             key = (str(r.get("SEDE")), str(r.get("LIGAS")).strip(), letra)
-            sala = str(sala).strip()
-            if key in mapa and mapa[key] != sala:
+
+            edificio = r.get(col_edificio) if col_edificio else None
+            texto_sala = _formato_sala(sala, edificio)
+            if not texto_sala:
+                continue
+
+            if key in mapa and mapa[key] != texto_sala:
                 conflictos.add(key)
-            mapa[key] = sala  # si hay filas duplicadas (p.ej. una por semana) y difieren, gana la última
+            mapa[key] = texto_sala  # si hay filas duplicadas (p.ej. una por semana) y difieren, gana la última
 
     if conflictos:
         logging.warning(
-            "Secciones: %d combinaciones (SEDE, LIGA, día) tienen salones distintos entre "
+            "Secciones: %d combinaciones (SEDE, LIGA, día) tienen salones/edificios distintos entre "
             "filas repetidas; se usó el último valor leído. Ejemplos: %s",
             len(conflictos), sorted(conflictos)[:5],
         )
     logging.info(
-        "Salones por día cargados desde Secciones: %d combinaciones (SEDE, LIGA, día) "
+        "Salones y edificios por día cargados desde Secciones: %d combinaciones (SEDE, LIGA, día) "
         "a partir de %d filas.",
         len(mapa), total_filas,
     )
@@ -167,6 +206,7 @@ def find_input_excel(prefer: str = None) -> str:
 def load_data(path: str) -> pd.DataFrame:
     # Renombrar columnas a un esquema interno homogéneo (consolidado o reporte por sede)
     df = pd.read_excel(path, engine="openpyxl")
+    df.columns = [str(c).strip() for c in df.columns]
     ren = {
         "codigo_plantel": "SEDE",
         "codigo_modalidad": "MODALIDAD",
@@ -181,6 +221,7 @@ def load_data(path: str) -> pd.DataFrame:
         "instructor_code": "DOCENTE_ID",
         "instructor_name": "DOCENTE_NOMBRE",
         "sala": "SALA",
+        "edificio": "EDIFICIO",
         "packages": "PAQUETE",
         "utc_block": "UTC_BLOCK",
         "packages_utc_blocks_vacancies": "VACANTES_BLOQUE",
@@ -199,6 +240,8 @@ def load_data(path: str) -> pd.DataFrame:
         "ID DOCENTE": "DOCENTE_ID",
         "NOMBRE DOCENTE": "DOCENTE_NOMBRE",
         "SALA ASIGNADA": "SALA",
+        "EDIFICIO": "EDIFICIO",
+        "EDIFICIO ASIGNADO": "EDIFICIO",
         "SEMANAS": "SEMANAS",
         "PAQUETES DE LA LIGA": "PAQUETE",
         "BLOQUES UTC": "UTC_BLOCK",
@@ -502,7 +545,7 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
                     # combinación no aparece ahí, se usa el salón único de la liga como respaldo.
                     sala_dia = salones_map.get((str(sede_actual), liga_r, d))
                     if sala_dia is None and pd.notna(r.get("SALA")):
-                        sala_dia = str(r.get("SALA"))
+                        sala_dia = _formato_sala(r.get("SALA"), r.get("EDIFICIO"))
                     if sala_dia:
                         bloques_map[key]["sala"].add(sala_dia)
                     if pd.notna(r.get("ASIGNATURA")):      bloques_map[key]["asig"].add(str(r.get("ASIGNATURA")))
@@ -560,7 +603,7 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
                     # por (sede, liga, día), con respaldo al salón único de la liga si falta el dato.
                     sala_dia = salones_map.get((str(sede_actual), liga_r, d))
                     if sala_dia is None and pd.notna(r.get("SALA")):
-                        sala_dia = str(r.get("SALA"))
+                        sala_dia = _formato_sala(r.get("SALA"), r.get("EDIFICIO"))
                     if sala_dia:
                         content_map[key]["sala"].add(sala_dia)
 
