@@ -1,201 +1,87 @@
 # -*- coding: utf-8 -*-
 """
-Modal y controlador de descargas interactivo.
+Modal y notificaciones de descarga interactiva.
 """
-import streamlit.components.v1 as components
+import streamlit as st
+
+# Compatibilidad con st.dialog (Streamlit >= 1.34) o st.experimental_dialog
+if hasattr(st, "dialog"):
+    _dialog_decorator = st.dialog
+elif hasattr(st, "experimental_dialog"):
+    _dialog_decorator = st.experimental_dialog
+else:
+    _dialog_decorator = None
 
 
-def inject_download_modal():
-    """Inyecta el modal interactivo de descarga y el interceptor en el cliente."""
-    modal_js = r"""
-    <script id="utc-download-modal-script">
-    (function() {
-        const win = window.parent || window;
-        const doc = win.document || document;
+def render_dialog_content(filename: str, blob: bytes):
+    """Contenido visual del modal de descarga."""
+    size_mb = len(blob) / (1024 * 1024)
 
-        try {
-            const frame = window.frameElement;
-            if (frame) {
-                frame.style.display = 'none';
-                frame.style.height = '0px';
-                frame.style.border = 'none';
-                frame.style.margin = '0px';
-                frame.style.padding = '0px';
-            }
-        } catch (e) {}
+    st.markdown(
+        f"""
+        <div style="text-align: center; padding: 0.5rem 0 1rem 0;">
+            <div style="width: 76px; height: 76px; margin: 0 auto 1.2rem auto; border-radius: 50%;
+                        background: linear-gradient(135deg, rgba(79,139,249,0.18), rgba(108,99,255,0.25));
+                        border: 2px solid rgba(79,139,249,0.4); display: flex; align-items: center;
+                        justify-content: center; box-shadow: 0 0 24px rgba(79,139,249,0.35);">
+                <span style="font-size: 2.3rem;">📥</span>
+            </div>
+            <h3 style="margin: 0 0 0.5rem 0; color: #fafafa; font-family: 'Outfit', sans-serif;">
+                ¡Descarga en proceso!
+            </h3>
+            <div style="display: inline-block; background: rgba(79,139,249,0.12);
+                        border: 1px solid rgba(79,139,249,0.3); border-radius: 8px;
+                        padding: 0.35rem 0.9rem; color: #60a5fa; font-weight: 600;
+                        font-family: monospace; font-size: 0.95rem; margin-bottom: 1rem;">
+                {filename} &middot; {size_mb:.1f} MB
+            </div>
+            <p style="color: #94a3b8; font-size: 0.92rem; line-height: 1.5; margin-bottom: 1.2rem;">
+                Tu solicitud está siendo procesada. El archivo se está transfiriendo a tu equipo
+                y se guardará en tu carpeta de descargas habitual.
+            </p>
+            <div style="background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3);
+                        border-radius: 10px; padding: 0.6rem 1rem; color: #a7f3d0;
+                        font-size: 0.88rem; font-weight: 500; display: flex; align-items: center;
+                        justify-content: center; gap: 0.5rem; margin-bottom: 1.4rem;">
+                <span>✔</span> Solicitud enviada correctamente al navegador
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        // Asegurar que el overlay del modal exista en el body principal
-        if (!doc.getElementById('utc-download-modal-overlay')) {
-            const overlay = doc.createElement('div');
-            overlay.id = 'utc-download-modal-overlay';
-            overlay.className = 'utc-modal-overlay';
-            overlay.innerHTML = `
-                <div class="utc-modal-card">
-                    <button class="utc-modal-close" id="utc-modal-close-btn" title="Cerrar" aria-label="Cerrar">&times;</button>
-                    <div class="utc-modal-icon-wrap">
-                        <div class="utc-icon-circle pulsing" id="utc-icon-circle">
-                            <svg class="utc-icon-download" id="utc-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                <path class="arrow-stem" d="M12 3v13"></path>
-                                <polyline class="arrow-head" points="7 11 12 16 17 11"></polyline>
-                                <path class="tray-line" d="M4 20h16"></path>
-                            </svg>
-                        </div>
-                    </div>
-                    <h3 class="utc-modal-title" id="utc-modal-title">Descargando archivo...</h3>
-                    <div class="utc-modal-filename" id="utc-modal-filename">archivo.zip</div>
-                    <p class="utc-modal-desc" id="utc-modal-desc">
-                        Su solicitud se está procesando. El archivo se descargará en su equipo.
-                    </p>
-                    <div class="utc-progress-track">
-                        <div class="utc-progress-bar" id="utc-progress-bar"></div>
-                    </div>
-                    <div class="utc-status-badge" id="utc-status-badge">
-                        <span class="utc-status-dot"></span>
-                        <span id="utc-status-text">Procesando descarga...</span>
-                    </div>
-                </div>
-            `;
-            doc.body.appendChild(overlay);
+    c1, c2 = st.columns(2)
+    with c1:
+        st.download_button(
+            "⬇️ Descargar de nuevo",
+            data=blob,
+            file_name=filename,
+            mime="application/zip",
+            key=f"modal_redownload_{filename}",
+            use_container_width=True,
+            help="Haz clic si tu navegador bloqueó la descarga automática",
+        )
+    with c2:
+        if st.button("Cerrar", key=f"modal_close_{filename}", use_container_width=True, type="primary"):
+            st.session_state.just_downloaded = None
+            st.rerun()
 
-            const closeBtn = doc.getElementById('utc-modal-close-btn');
-            if (closeBtn) {
-                closeBtn.addEventListener('click', () => {
-                    overlay.classList.remove('active');
-                });
-            }
 
-            overlay.addEventListener('click', (e) => {
-                if (e.target === overlay) {
-                    overlay.classList.remove('active');
-                }
-            });
-        }
+if _dialog_decorator:
+    @_dialog_decorator("📥 Descarga en proceso")
+    def _modal_dialog(filename: str, blob: bytes):
+        render_dialog_content(filename, blob)
 
-        // Evitar registrar listeners duplicados
-        if (win.__utcDownloadModalHandlerAttached) return;
-        win.__utcDownloadModalHandlerAttached = true;
 
-        function showModal(filename) {
-            const overlay = doc.getElementById('utc-download-modal-overlay');
-            if (!overlay) return;
+def show_download_dialog(filename: str, blob: bytes):
+    """Muestra el modal de descarga interactivo y un toast de confirmación."""
+    try:
+        st.toast(f"📥 Descarga iniciada: {filename}", icon="📥")
+    except Exception:
+        pass
 
-            const titleEl = doc.getElementById('utc-modal-title');
-            const fileEl = doc.getElementById('utc-modal-filename');
-            const descEl = doc.getElementById('utc-modal-desc');
-            const statusEl = doc.getElementById('utc-status-text');
-            const circle = doc.getElementById('utc-icon-circle');
-            const bar = doc.getElementById('utc-progress-bar');
-            const badge = doc.getElementById('utc-status-badge');
-
-            if (titleEl) titleEl.textContent = 'Descargando archivo...';
-            if (fileEl) fileEl.textContent = filename;
-            if (descEl) descEl.textContent = 'Su solicitud se está procesando. El archivo se descargará en su equipo.';
-            if (statusEl) statusEl.textContent = 'Descargando archivo...';
-
-            if (circle) {
-                circle.className = 'utc-icon-circle pulsing';
-                circle.innerHTML = `
-                    <svg class="utc-icon-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                        <path class="arrow-stem" d="M12 3v13"></path>
-                        <polyline class="arrow-head" points="7 11 12 16 17 11"></polyline>
-                        <path class="tray-line" d="M4 20h16"></path>
-                    </svg>
-                `;
-            }
-
-            if (bar) bar.className = 'utc-progress-bar';
-            if (badge) badge.className = 'utc-status-badge';
-
-            overlay.classList.add('active');
-        }
-
-        function setComplete(filename) {
-            const overlay = doc.getElementById('utc-download-modal-overlay');
-            const titleEl = doc.getElementById('utc-modal-title');
-            const descEl = doc.getElementById('utc-modal-desc');
-            const statusEl = doc.getElementById('utc-status-text');
-            const circle = doc.getElementById('utc-icon-circle');
-            const bar = doc.getElementById('utc-progress-bar');
-            const badge = doc.getElementById('utc-status-badge');
-
-            if (circle) {
-                circle.className = 'utc-icon-circle completed';
-                circle.innerHTML = `
-                    <svg class="utc-icon-download" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="20 6 9 17 4 12"></polyline>
-                    </svg>
-                `;
-            }
-
-            if (titleEl) titleEl.textContent = '✅ ¡Descarga completada!';
-            if (descEl) descEl.textContent = 'El archivo se ha transferido exitosamente.';
-            if (statusEl) statusEl.textContent = 'Descarga finalizada';
-
-            if (bar) bar.classList.add('completed');
-            if (badge) badge.classList.add('completed');
-
-            setTimeout(() => {
-                if (overlay) overlay.classList.remove('active');
-            }, 1400);
-        }
-
-        // Interceptar clics en botones de descarga de Streamlit
-        doc.addEventListener('click', async function(e) {
-            const btn = e.target.closest('div[data-testid="stDownloadButton"] a, a[download]');
-            if (!btn) return;
-
-            if (btn.classList.contains('utc-handled')) return;
-            if (btn.__isDownloading) return;
-
-            const href = btn.href || btn.getAttribute('href');
-            if (!href) return;
-
-            const filename = btn.getAttribute('download') || btn.innerText.replace(/^[⬇️\s]+/, '').trim() || 'descarga.zip';
-
-            e.preventDefault();
-            e.stopPropagation();
-
-            btn.__isDownloading = true;
-            btn.classList.add('utc-btn-downloading');
-            showModal(filename);
-
-            try {
-                const response = await win.fetch(href);
-                if (!response.ok) throw new Error('Fetch failed with status ' + response.status);
-                const blob = await response.blob();
-
-                const blobUrl = win.URL.createObjectURL(blob);
-                const tempLink = doc.createElement('a');
-                tempLink.href = blobUrl;
-                tempLink.download = filename;
-                tempLink.className = 'utc-handled';
-                doc.body.appendChild(tempLink);
-                tempLink.click();
-                doc.body.removeChild(tempLink);
-                setTimeout(() => win.URL.revokeObjectURL(blobUrl), 20000);
-
-                setComplete(filename);
-            } catch (err) {
-                console.warn('Direct fetch failed, falling back to browser download:', err);
-                const fallbackLink = doc.createElement('a');
-                fallbackLink.href = href;
-                fallbackLink.download = filename;
-                fallbackLink.className = 'utc-handled';
-                doc.body.appendChild(fallbackLink);
-                fallbackLink.click();
-                doc.body.removeChild(fallbackLink);
-
-                setTimeout(() => {
-                    setComplete(filename);
-                }, 1000);
-            } finally {
-                setTimeout(() => {
-                    btn.__isDownloading = false;
-                    btn.classList.remove('utc-btn-downloading');
-                }, 1600);
-            }
-        }, true);
-    })();
-    </script>
-    """
-    components.html(modal_js, height=0)
+    if _dialog_decorator:
+        _modal_dialog(filename, blob)
+    else:
+        st.info(f"📥 Descargando **{filename}**...")
+        render_dialog_content(filename, blob)

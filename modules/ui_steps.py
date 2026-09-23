@@ -12,7 +12,7 @@ import streamlit.components.v1 as components
 
 from modules.auth import logout
 from modules.config import GRUPOS_SEMANAS_CFG, SEDES_CONOCIDAS
-from modules.download_modal import inject_download_modal
+from modules.download_modal import show_download_dialog
 from modules.engine import detect_sedes, prepare_workdir, run_generation
 from modules.styles import (
     get_logo_b64,
@@ -176,19 +176,38 @@ def step_5_downloads():
     render_step_connector()
     render_step_card_start(5, "📥 Descargar resultados")
 
+    # Banner de confirmación si se acaba de solicitar una descarga
+    active_dl = st.session_state.get("just_downloaded")
+    if active_dl and active_dl in zips_data:
+        blob_len = len(zips_data[active_dl]) / (1024 * 1024)
+        st.success(
+            f"📥 **Descarga en proceso:** Se ha solicitado **{active_dl}** ({blob_len:.1f} MB). "
+            f"El archivo se está guardando en tu equipo."
+        )
+
+    def _on_download_click(fname):
+        st.session_state.just_downloaded = fname
+
     cols = st.columns(min(len(zips_data), 4))
     for i, (name, blob) in enumerate(zips_data.items()):
         with cols[i % len(cols)]:
-            st.download_button(
+            clicked = st.download_button(
                 f"⬇️ {name}",
                 data=blob,
                 file_name=name,
                 mime="application/zip",
                 use_container_width=True,
+                key=f"dl_btn_{name}",
+                on_click=_on_download_click,
+                args=(name,),
             )
             st.caption(f"{len(blob) / 1024 / 1024:.1f} MB")
+            if clicked:
+                st.session_state.just_downloaded = name
 
-    inject_download_modal()
+    # Mostrar modal dialog interactivo si hay una descarga activa
+    if active_dl and active_dl in zips_data:
+        show_download_dialog(active_dl, zips_data[active_dl])
 
 
 def step_6_preview():
