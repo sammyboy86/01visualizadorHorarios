@@ -19,29 +19,6 @@ GRUPOS_SEMANAS = [
 
 # --- Directorio base del script ---
 _script_dir = os.path.dirname(os.path.abspath(__file__))
-os.chdir(_script_dir)
-
-# --- Parchear find_input_excel para excluir archivos generados y reportes por sede ---
-_orig_find = gen.find_input_excel
-
-def _find_local(prefer=None):
-    candidates = []
-    for f in glob.glob(os.path.join(_script_dir, "*.xlsx")):
-        name = os.path.basename(f)
-        if name.startswith("~$") or gen._is_skipped_xlsx(name):
-            continue
-        candidates.append(f)
-    if not candidates:
-        raise FileNotFoundError("No se encontró ningún .xlsx consolidado en la carpeta.")
-    candidates.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-    chosen = candidates[0]
-    print(f"  Excel consolidado: {os.path.basename(chosen)}")
-    return chosen
-
-gen.find_input_excel = _find_local
-
-# --- load_data original (se usa en cada iteración) ---
-_orig_load_unificado = gen.load_data_unificado
 
 # --- Ejecutar un grupo de semanas ---
 def ejecutar_grupo(sufijo, semanas_filtro, incluir_vacias):
@@ -59,26 +36,25 @@ def ejecutar_grupo(sufijo, semanas_filtro, incluir_vacias):
             print(f"  Filas por semanas: {len(df)}")
         return df
 
-    def _load_unificado_filtrada(path_entrada=None, sedes_filtro=None):
-        df = _orig_load_unificado(path_entrada, sedes_filtro=SEDES_FILTRO)
+    def _load_unificado_filtrada(path_entrada=None, sedes_filtro=None, workdir=None):
+        df = gen.load_data_unificado(path_entrada, sedes_filtro=SEDES_FILTRO, workdir=workdir)
         return _filtrar_semanas(df)
 
-    gen.load_data_unificado = _load_unificado_filtrada
-    gen.generar_reportes(sedes_filtro=SEDES_FILTRO)
+    gen.generar_reportes(sedes_filtro=SEDES_FILTRO, workdir=_script_dir, loader=_load_unificado_filtrada)
 
     # Renombrar carpetas y ZIPs generados
     for sede in SEDES_FILTRO:
         import re
         sede_slug = re.sub(r'[\/*?"<>| ]', "_", sede)
 
-        src_dir = pathlib.Path(f"salida_{sede_slug}")
-        dst_dir = pathlib.Path(f"horarios_{sede_slug}_{sufijo}")
+        src_dir = pathlib.Path(_script_dir) / f"salida_{sede_slug}"
+        dst_dir = pathlib.Path(_script_dir) / f"horarios_{sede_slug}_{sufijo}"
         if dst_dir.exists():
             shutil.rmtree(dst_dir)
         if src_dir.exists():
             src_dir.rename(dst_dir)
 
-        src_zip = pathlib.Path(f"UTC_Reportes_SEDE_{sede_slug}.zip")
+        src_zip = pathlib.Path(_script_dir) / f"UTC_Reportes_SEDE_{sede_slug}.zip"
         if src_zip.exists():
             src_zip.unlink()
 
@@ -88,23 +64,25 @@ def ejecutar_grupo(sufijo, semanas_filtro, incluir_vacias):
 for sufijo, semanas, vacias in GRUPOS_SEMANAS:
     ejecutar_grupo(sufijo, semanas, vacias)
 
+
 # --- Agrupar carpetas de semanas por sede y comprimir ---
 import re, zipfile
 print("\nAgrupando carpetas por sede...")
+_sdp = pathlib.Path(_script_dir)
 for sede in SEDES_FILTRO:
     sede_slug = re.sub(r'[\/*?"<>| ]', "_", sede)
-    parent = pathlib.Path(f"Horarios_{sede_slug}")
+    parent = _sdp / f"Horarios_{sede_slug}"
     if parent.exists():
         shutil.rmtree(parent)
     parent.mkdir()
 
     for sufijo, _, _ in GRUPOS_SEMANAS:
-        src = pathlib.Path(f"horarios_{sede_slug}_{sufijo}")
+        src = _sdp / f"horarios_{sede_slug}_{sufijo}"
         if src.exists():
             src.rename(parent / src.name)
 
     # Comprimir la carpeta padre
-    zip_path = pathlib.Path(f"Horarios_{sede_slug}.zip")
+    zip_path = _sdp / f"Horarios_{sede_slug}.zip"
     if zip_path.exists():
         zip_path.unlink()
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
