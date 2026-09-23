@@ -155,9 +155,9 @@ def step_4_generate(reporte, secciones, sedes_final, active):
                 f"✅ ¡Generación completada! — {len(zips)} archivo(s) ZIP."
             )
 
-            # Persistir resultados en el estado de sesión
+            # Persistir rutas de resultados en el estado de sesión (ligero en RAM)
             st.session_state.res_zips = {
-                os.path.basename(z): pathlib.Path(z).read_bytes() for z in zips
+                os.path.basename(z): str(pathlib.Path(z).resolve()) for z in zips
             }
             st.session_state.res_sedes = sorted(sedes_final)
             st.session_state.res_wd = wd
@@ -179,9 +179,10 @@ def step_5_downloads():
     # Banner de confirmación si se acaba de solicitar una descarga
     active_dl = st.session_state.get("just_downloaded")
     if active_dl and active_dl in zips_data:
-        blob_len = len(zips_data[active_dl]) / (1024 * 1024)
+        val = zips_data[active_dl]
+        size_mb = os.path.getsize(val) / (1024 * 1024) if isinstance(val, str) and os.path.exists(val) else len(val) / (1024 * 1024)
         st.success(
-            f"📥 **Descarga en proceso:** Se ha solicitado **{active_dl}** ({blob_len:.1f} MB). "
+            f"📥 **Descarga en proceso:** Se ha solicitado **{active_dl}** ({size_mb:.1f} MB). "
             f"El archivo se está guardando en tu equipo."
         )
 
@@ -189,11 +190,18 @@ def step_5_downloads():
         st.session_state.just_downloaded = fname
 
     cols = st.columns(min(len(zips_data), 4))
-    for i, (name, blob) in enumerate(zips_data.items()):
+    for i, (name, val) in enumerate(zips_data.items()):
+        size_mb = os.path.getsize(val) / (1024 * 1024) if isinstance(val, str) and os.path.exists(val) else len(val) / (1024 * 1024)
         with cols[i % len(cols)]:
+            if isinstance(val, str) and os.path.exists(val):
+                with open(val, "rb") as fp:
+                    dl_bytes = fp.read()
+            else:
+                dl_bytes = val
+
             clicked = st.download_button(
                 f"⬇️ {name}",
-                data=blob,
+                data=dl_bytes,
                 file_name=name,
                 mime="application/zip",
                 use_container_width=True,
@@ -201,7 +209,7 @@ def step_5_downloads():
                 on_click=_on_download_click,
                 args=(name,),
             )
-            st.caption(f"{len(blob) / 1024 / 1024:.1f} MB")
+            st.caption(f"{size_mb:.1f} MB")
             if clicked:
                 st.session_state.just_downloaded = name
 

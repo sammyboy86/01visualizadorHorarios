@@ -2,6 +2,7 @@
 """
 Modal y notificaciones de descarga interactiva.
 """
+import os
 import streamlit as st
 
 # Compatibilidad con st.dialog (Streamlit >= 1.34) o st.experimental_dialog
@@ -13,9 +14,13 @@ else:
     _dialog_decorator = None
 
 
-def render_dialog_content(filename: str, blob: bytes):
+def render_dialog_content(filename: str, file_path_or_blob):
     """Contenido visual del modal de descarga."""
-    size_mb = len(blob) / (1024 * 1024)
+    size_mb = 0.0
+    if isinstance(file_path_or_blob, str) and os.path.exists(file_path_or_blob):
+        size_mb = os.path.getsize(file_path_or_blob) / (1024 * 1024)
+    elif isinstance(file_path_or_blob, (bytes, bytearray)):
+        size_mb = len(file_path_or_blob) / (1024 * 1024)
 
     st.markdown(
         f"""
@@ -52,9 +57,15 @@ def render_dialog_content(filename: str, blob: bytes):
 
     c1, c2 = st.columns(2)
     with c1:
+        if isinstance(file_path_or_blob, str) and os.path.exists(file_path_or_blob):
+            with open(file_path_or_blob, "rb") as fp:
+                data_to_dl = fp.read()
+        else:
+            data_to_dl = file_path_or_blob
+
         st.download_button(
             "⬇️ Descargar de nuevo",
-            data=blob,
+            data=data_to_dl,
             file_name=filename,
             mime="application/zip",
             key=f"modal_redownload_{filename}",
@@ -69,11 +80,11 @@ def render_dialog_content(filename: str, blob: bytes):
 
 if _dialog_decorator:
     @_dialog_decorator("📥 Descarga en proceso")
-    def _modal_dialog(filename: str, blob: bytes):
-        render_dialog_content(filename, blob)
+    def _modal_dialog(filename: str, file_path_or_blob):
+        render_dialog_content(filename, file_path_or_blob)
 
 
-def show_download_dialog(filename: str, blob: bytes):
+def show_download_dialog(filename: str, file_path_or_blob):
     """Muestra el modal de descarga interactivo y un toast de confirmación."""
     try:
         st.toast(f"📥 Descarga iniciada: {filename}", icon="📥")
@@ -81,7 +92,7 @@ def show_download_dialog(filename: str, blob: bytes):
         pass
 
     if _dialog_decorator:
-        _modal_dialog(filename, blob)
+        _modal_dialog(filename, file_path_or_blob)
     else:
         st.info(f"📥 Descargando **{filename}**...")
-        render_dialog_content(filename, blob)
+        render_dialog_content(filename, file_path_or_blob)

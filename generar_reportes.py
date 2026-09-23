@@ -489,7 +489,7 @@ def generar_reporte_packages_expandidos(df_base: pd.DataFrame, out_path: str):
     return out_path
 
 # ---------- Generador principal ----------
-def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_PATH, sedes_filtro=None, workdir=None, loader=None):
+def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_PATH, sedes_filtro=None, workdir=None, loader=None, crear_zip=True):
     wd = workdir or "."
     # Resolver rutas relativas de template y logo respecto al workdir
     if not os.path.isabs(template_path):
@@ -702,12 +702,13 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
                                    grupo=str(salon_texto), dias=list(DIA_LETRA.values()), filas=grid).replace("GRUPO:", "SALÓN:")
             (out_s / fname).write_text(html, "utf8")
 
-        # Empaquetar sede
-        zip_name = str(pathlib.Path(wd) / f"UTC_Reportes_SEDE_{sede_slug}.zip")
-        with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED) as z:
-            for f in out_g.glob("*.html"): z.write(f, arcname=f"grupos/{f.name}")
-            for f in out_d.glob("*.html"): z.write(f, arcname=f"docentes/{f.name}")
-            for f in out_s.glob("*.html"): z.write(f, arcname=f"salones/{f.name}")
+        # Empaquetar sede (solo si se solicita crear_zip)
+        if crear_zip:
+            zip_name = str(pathlib.Path(wd) / f"UTC_Reportes_SEDE_{sede_slug}.zip")
+            with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as z:
+                for f in out_g.glob("*.html"): z.write(f, arcname=f"grupos/{f.name}")
+                for f in out_d.glob("*.html"): z.write(f, arcname=f"docentes/{f.name}")
+                for f in out_s.glob("*.html"): z.write(f, arcname=f"salones/{f.name}")
 
     # AJUSTE: Generación de reportes finales (Mapeo y Packages)
     generar_reporte_mapeo_bloques(df.copy(), str(pathlib.Path(wd) / "Mapeo_Bloques_Transformados.xlsx"))

@@ -77,7 +77,7 @@ def run_generation(wd: str, sedes: set, grupos: list, bar, status) -> list[str]:
             return _load
 
         loader = _make_loader(g["filtro"], g["vacias"], sedes)
-        gen.generar_reportes(sedes_filtro=sedes, workdir=wd, loader=loader)
+        gen.generar_reportes(sedes_filtro=sedes, workdir=wd, loader=loader, crear_zip=False)
 
         # Renombrar carpetas de salida → sufijo de grupo
         for sede in sedes:
@@ -88,8 +88,6 @@ def run_generation(wd: str, sedes: set, grupos: list, bar, status) -> list[str]:
                 shutil.rmtree(dst)
             if src.exists():
                 src.rename(dst)
-            for zp in wdp.glob(f"UTC_Reportes_SEDE_{slug}.zip"):
-                zp.unlink()
 
     # ── Empaquetado por sede ──
     bar.progress((total - 1) / total, text="Empaquetando…")
@@ -111,7 +109,7 @@ def run_generation(wd: str, sedes: set, grupos: list, bar, status) -> list[str]:
         zpath = wdp / f"Horarios_{slug}.zip"
         if zpath.exists():
             zpath.unlink()
-        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(zpath, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
             for f in parent.rglob("*"):
                 zf.write(f, f.relative_to(parent.parent))
         zips.append(str(zpath.resolve()))
