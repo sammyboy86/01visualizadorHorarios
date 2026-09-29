@@ -68,31 +68,60 @@ def _is_skipped_xlsx(name: str) -> bool:
     low = name.lower()
     return any(k in low for k in _SKIP_XLSX_KEYWORDS)
 
-def find_sede_report_excels() -> list:
+def find_sede_report_excels(workdir=None) -> list:
     """Reportes individuales por sede: 'Reporte Horarios y Paquetes - Proceso NNN.xlsx'."""
     import glob
+    wd = workdir or "."
     files = []
-    for f in glob.glob(PATRON_REPORTE_SEDE):
-        if f.startswith("~$"):
+    for f in glob.glob(os.path.join(wd, PATRON_REPORTE_SEDE)):
+        if os.path.basename(f).startswith("~$"):
             continue
         files.append(f)
     files.sort()
     return files
 
-def find_secciones_excels() -> list:
+def _clean_str(val) -> str:
+    if val is None or pd.isna(val):
+        return ""
+    if isinstance(val, float) and val.is_integer():
+        return str(int(val))
+    s = str(val).strip()
+    if s.lower() in ("nan", "none", "null"):
+        return ""
+    if s.endswith(".0"):
+        try:
+            return str(int(float(s)))
+        except ValueError:
+            pass
+    return s
+
+def _formato_sala(sala, edificio=None) -> str:
+    sala_str = _clean_str(sala)
+    edif_str = _clean_str(edificio)
+    if sala_str and edif_str:
+        return f"{sala_str} - {edif_str}"
+    return sala_str or edif_str
+
+def find_secciones_excels(workdir=None) -> list:
     """Reporte(s) 'Resultados - Secciones - Proceso NNN.xlsx': trae, fila por fila,
-    el salón real de cada sesión (LIGA + día), a diferencia del salón único por liga
+    el salón real de cada sesión (LIGA + día) y su edificio, a diferencia del salón único por liga
     que trae 'Reporte Horarios y Paquetes'."""
     import glob
-    files = [f for f in glob.glob(PATRON_SECCIONES) if not os.path.basename(f).startswith("~$")]
+    wd = workdir or "."
+    files = [f for f in glob.glob(os.path.join(wd, PATRON_SECCIONES)) if not os.path.basename(f).startswith("~$")]
+    if not files:
+        files = [
+            f for f in glob.glob(os.path.join(wd, "*.xlsx"))
+            if not os.path.basename(f).startswith("~$") and "secciones" in os.path.basename(f).lower()
+        ]
     files.sort()
     return files
 
-# AJUSTE: mapa (SEDE, LIGA, día) -> salón real, construido a partir del reporte de Secciones.
+# AJUSTE: mapa (SEDE, LIGA, día) -> salón real (+ edificio si existe), construido a partir del reporte de Secciones.
 # Es el complemento que le falta a "Reporte Horarios y Paquetes" para poder mostrar un
 # salón distinto por día cuando la liga efectivamente cambia de salón entre sesiones.
-def load_salones_por_liga_dia(sedes_filtro=None) -> dict:
-    archivos = find_secciones_excels()
+def load_salones_por_liga_dia(sedes_filtro=None, workdir=None) -> dict:
+    archivos = find_secciones_excels(workdir=workdir)
     if not archivos:
         logging.warning(
             "No se encontró el reporte de Secciones (patrón: %s). Se usará el salón único "
@@ -109,12 +138,19 @@ def load_salones_por_liga_dia(sedes_filtro=None) -> dict:
 
     for f in archivos:
         df = pd.read_excel(f, engine="openpyxl")
+        df.columns = [str(c).strip() for c in df.columns]
         faltantes = {"SEDE", "LIGAS", "DIA", "SALA"} - set(df.columns)
         if faltantes:
             logging.warning("Secciones %s: faltan columnas %s; se omite este archivo.", f, faltantes)
             continue
         if sedes_f:
             df = df[df["SEDE"].astype(str).isin(sedes_f)]
+
+        col_edificio = next(
+            (c for c in df.columns if str(c).strip().upper() in ("EDIFICIO", "EDIFICIO ASIGNADO")),
+            None
+        )
+
         for _, r in df.iterrows():
             total_filas += 1
             sala = r.get("SALA")
@@ -130,31 +166,40 @@ def load_salones_por_liga_dia(sedes_filtro=None) -> dict:
             if letra is None:
                 continue
             key = (str(r.get("SEDE")), str(r.get("LIGAS")).strip(), letra)
-            sala = str(sala).strip()
-            if key in mapa and mapa[key] != sala:
+
+            edificio = r.get(col_edificio) if col_edificio else None
+            texto_sala = _formato_sala(sala, edificio)
+            if not texto_sala:
+                continue
+
+            if key in mapa and mapa[key] != texto_sala:
                 conflictos.add(key)
-            mapa[key] = sala  # si hay filas duplicadas (p.ej. una por semana) y difieren, gana la última
+            mapa[key] = texto_sala  # si hay filas duplicadas (p.ej. una por semana) y difieren, gana la última
 
     if conflictos:
         logging.warning(
-            "Secciones: %d combinaciones (SEDE, LIGA, día) tienen salones distintos entre "
+            "Secciones: %d combinaciones (SEDE, LIGA, día) tienen salones/edificios distintos entre "
             "filas repetidas; se usó el último valor leído. Ejemplos: %s",
             len(conflictos), sorted(conflictos)[:5],
         )
     logging.info(
-        "Salones por día cargados desde Secciones: %d combinaciones (SEDE, LIGA, día) "
+        "Salones y edificios por día cargados desde Secciones: %d combinaciones (SEDE, LIGA, día) "
         "a partir de %d filas.",
         len(mapa), total_filas,
     )
     return mapa
 
-def find_input_excel(prefer: str = None) -> str:
+def find_input_excel(prefer: str = None, workdir=None) -> str:
     import glob
-    if prefer and os.path.exists(prefer):
-        return prefer
+    wd = workdir or "."
+    if prefer:
+        prefer_abs = prefer if os.path.isabs(prefer) else os.path.join(wd, prefer)
+        if os.path.exists(prefer_abs):
+            return prefer_abs
     candidates = []
-    for f in glob.glob("*.xlsx"):
-        if f.startswith("~$") or _is_skipped_xlsx(f):
+    for f in glob.glob(os.path.join(wd, "*.xlsx")):
+        basename = os.path.basename(f)
+        if basename.startswith("~$") or _is_skipped_xlsx(basename):
             continue
         candidates.append(f)
     if not candidates:
@@ -167,6 +212,7 @@ def find_input_excel(prefer: str = None) -> str:
 def load_data(path: str) -> pd.DataFrame:
     # Renombrar columnas a un esquema interno homogéneo (consolidado o reporte por sede)
     df = pd.read_excel(path, engine="openpyxl")
+    df.columns = [str(c).strip() for c in df.columns]
     ren = {
         "codigo_plantel": "SEDE",
         "codigo_modalidad": "MODALIDAD",
@@ -181,6 +227,7 @@ def load_data(path: str) -> pd.DataFrame:
         "instructor_code": "DOCENTE_ID",
         "instructor_name": "DOCENTE_NOMBRE",
         "sala": "SALA",
+        "edificio": "EDIFICIO",
         "packages": "PAQUETE",
         "utc_block": "UTC_BLOCK",
         "packages_utc_blocks_vacancies": "VACANTES_BLOQUE",
@@ -199,6 +246,8 @@ def load_data(path: str) -> pd.DataFrame:
         "ID DOCENTE": "DOCENTE_ID",
         "NOMBRE DOCENTE": "DOCENTE_NOMBRE",
         "SALA ASIGNADA": "SALA",
+        "EDIFICIO": "EDIFICIO",
+        "EDIFICIO ASIGNADO": "EDIFICIO",
         "SEMANAS": "SEMANAS",
         "PAQUETES DE LA LIGA": "PAQUETE",
         "BLOQUES UTC": "UTC_BLOCK",
@@ -221,7 +270,7 @@ def _sedes_en_archivo(path: str) -> set:
     series = pd.read_excel(path, usecols=[sede_col], engine="openpyxl")[sede_col]
     return set(series.dropna().astype(str).unique())
 
-def load_data_unificado(path_entrada=None, sedes_filtro=None) -> pd.DataFrame:
+def load_data_unificado(path_entrada=None, sedes_filtro=None, workdir=None) -> pd.DataFrame:
     """Carga reportes por sede y los concatena; si no hay, usa un Excel consolidado.
 
     sedes_filtro: set/list de códigos de plantel; solo carga archivos de esas sedes.
@@ -229,7 +278,7 @@ def load_data_unificado(path_entrada=None, sedes_filtro=None) -> pd.DataFrame:
     if sedes_filtro is not None:
         sedes_filtro = {str(s) for s in sedes_filtro}
 
-    sede_files = find_sede_report_excels()
+    sede_files = find_sede_report_excels(workdir=workdir)
     if sede_files:
         dfs = []
         for f in sede_files:
@@ -263,7 +312,7 @@ def load_data_unificado(path_entrada=None, sedes_filtro=None) -> pd.DataFrame:
             raise ValueError("Todos los reportes por sede están vacíos.")
         return pd.concat(dfs, ignore_index=True)
 
-    path = path_entrada or find_input_excel(RUTA_ENTRADA)
+    path = path_entrada or find_input_excel(RUTA_ENTRADA, workdir=workdir)
     logging.info("Sin reportes por sede; usando consolidado: %s", path)
     df = load_data(path)
     if sedes_filtro:
@@ -440,14 +489,24 @@ def generar_reporte_packages_expandidos(df_base: pd.DataFrame, out_path: str):
     return out_path
 
 # ---------- Generador principal ----------
-def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_PATH, sedes_filtro=None):
+def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_PATH, sedes_filtro=None, workdir=None, loader=None, crear_zip=True):
+    wd = workdir or "."
+    # Resolver rutas relativas de template y logo respecto al workdir
+    if not os.path.isabs(template_path):
+        template_path = os.path.join(wd, template_path)
+    if not os.path.isabs(logo_path):
+        logo_path = os.path.join(wd, logo_path)
+
     if path_entrada:
+        if not os.path.isabs(path_entrada):
+            path_entrada = os.path.join(wd, path_entrada)
         df = load_data(path_entrada)
         if sedes_filtro is not None:
             sedes_f = {str(s) for s in sedes_filtro}
             df = df[df["SEDE"].astype(str).isin(sedes_f)].copy()
     else:
-        df = load_data_unificado(sedes_filtro=sedes_filtro)
+        load_fn = loader or load_data_unificado
+        df = load_fn(path_entrada, sedes_filtro=sedes_filtro, workdir=wd)
 
     if "UTC_BLOCK" not in df.columns:
         for c in list(df.columns):
@@ -459,7 +518,7 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
 
     # AJUSTE: salón real por (SEDE, LIGA, día), tomado del reporte de Secciones.
     # Complementa a "Reporte Horarios y Paquetes", que solo trae un salón por liga.
-    salones_map = load_salones_por_liga_dia(sedes_filtro=sedes_filtro)
+    salones_map = load_salones_por_liga_dia(sedes_filtro=sedes_filtro, workdir=wd)
 
     template = jinja2.Template(open(template_path, encoding="utf8").read())
     logo_b64 = "data:image/png;base64," + base64.b64encode(open(logo_path,"rb").read()).decode()
@@ -469,10 +528,10 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
 
     for sede_actual in sedes:
         sede_slug = re.sub(r"[\/*?\"<>| ]", "_", sede_actual)
-        carpeta = pathlib.Path(f"salida_{sede_slug}")
-        out_g = carpeta / "grupos"; out_d = carpeta / "docentes"
+        carpeta = pathlib.Path(wd) / f"salida_{sede_slug}"
+        out_g = carpeta / "grupos"; out_d = carpeta / "docentes"; out_s = carpeta / "salones"
         shutil.rmtree(carpeta, ignore_errors=True)
-        out_g.mkdir(parents=True); out_d.mkdir()
+        out_g.mkdir(parents=True); out_d.mkdir(); out_s.mkdir()
 
         df_sede = df[df["SEDE"].astype(str) == str(sede_actual)].copy()
         base_to_map = mapa_por_sede.get(str(sede_actual), {})
@@ -502,7 +561,7 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
                     # combinación no aparece ahí, se usa el salón único de la liga como respaldo.
                     sala_dia = salones_map.get((str(sede_actual), liga_r, d))
                     if sala_dia is None and pd.notna(r.get("SALA")):
-                        sala_dia = str(r.get("SALA"))
+                        sala_dia = _formato_sala(r.get("SALA"), r.get("EDIFICIO"))
                     if sala_dia:
                         bloques_map[key]["sala"].add(sala_dia)
                     if pd.notna(r.get("ASIGNATURA")):      bloques_map[key]["asig"].add(str(r.get("ASIGNATURA")))
@@ -528,9 +587,15 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
             (out_g / fname).write_text(html, "utf8")
 
         # ===================== POR DOCENTE (BLOQUES visibles) =================
-        for doc, dfd in df_sede.groupby("DOCENTE_NOMBRE"):
-            if pd.isna(doc):
+        # AJUSTE: se agrupa por ID DOCENTE (único) y no por NOMBRE DOCENTE para evitar
+        # colisiones entre docentes distintos que compartan el mismo nombre.
+        for doc_id, dfd in df_sede.groupby("DOCENTE_ID"):
+            if pd.isna(doc_id):
                 continue
+
+            # Nombre visible: el más frecuente dentro del grupo (respaldo: el propio ID)
+            nombres_validos = dfd["DOCENTE_NOMBRE"].dropna()
+            doc_nombre = nombres_validos.mode().iat[0] if not nombres_validos.empty else str(doc_id)
 
             # AJUSTE: Franja horaria desde las 07:00
             h_ini = "07:00"
@@ -554,7 +619,7 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
                     # por (sede, liga, día), con respaldo al salón único de la liga si falta el dato.
                     sala_dia = salones_map.get((str(sede_actual), liga_r, d))
                     if sala_dia is None and pd.notna(r.get("SALA")):
-                        sala_dia = str(r.get("SALA"))
+                        sala_dia = _formato_sala(r.get("SALA"), r.get("EDIFICIO"))
                     if sala_dia:
                         content_map[key]["sala"].add(sala_dia)
 
@@ -574,23 +639,81 @@ def generar_reportes(path_entrada=None, template_path=TEMPLATE, logo_path=LOGO_P
                 place(grid, blks, i, span, dia, txt)
 
             cleanup(grid)
-            safe = re.sub(r"[\/*?\"<>| ]","_", str(doc))
-            # AJUSTE: Mantiene el encabezado original
+            # Nombre de archivo basado en ID DOCENTE para evitar colisiones
+            safe = re.sub(r"[\/*?\"<>| ]","_", f"{doc_id}_{doc_nombre}")
+            # AJUSTE: Mantiene el encabezado original con el nombre del docente
             turno_doc = dfd["JORNADA"].mode().iat[0] if not dfd["JORNADA"].isna().all() else "MIXTO"
             html = template.render(logo=logo_b64, titulo_turno=f"TURNO: {turno_doc} - {sede_actual}",
-                                   grupo=str(doc), dias=list(DIA_LETRA.values()), filas=grid).replace("GRUPO:","DOCENTE:")
+                                   grupo=str(doc_nombre), dias=list(DIA_LETRA.values()), filas=grid).replace("GRUPO:","DOCENTE:")
             (out_d / f"{safe}_{sede_slug}.html").write_text(html, "utf8")
 
-        # Empaquetar sede
-        zip_name = f"UTC_Reportes_SEDE_{sede_slug}.zip"
-        with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED) as z:
-            for f in out_g.glob("*.html"): z.write(f, arcname=f"grupos/{f.name}")
-            for f in out_d.glob("*.html"): z.write(f, arcname=f"docentes/{f.name}")
+        # ===================== POR SALÓN ====================================
+        # Agrupa todas las sesiones por salón (sala + edificio) y genera un
+        # HTML de grilla semanal por cada salón, mostrando bloques UTC,
+        # asignaturas y docentes.
+        salon_sessions = defaultdict(list)  # {salon_texto: [(dia_letra, start, end, row), ...]}
+        for _, r in df_sede.iterrows():
+            liga_r = str(r.get("LIGA")).strip()
+            for (d, start, end) in parse_group_schedule(r["GROUP_SCHEDULE"]):
+                sala_dia = salones_map.get((str(sede_actual), liga_r, d))
+                if sala_dia is None and pd.notna(r.get("SALA")):
+                    sala_dia = _formato_sala(r.get("SALA"), r.get("EDIFICIO"))
+                if not sala_dia:
+                    continue
+                salon_sessions[sala_dia].append((d, start, end, r))
+
+        for salon_texto, sesiones in sorted(salon_sessions.items()):
+            h_ini = "07:00"
+            _maxs = [end for (_, _, end, _) in sesiones]
+            h_fin = max(max(_maxs), "22:00") if _maxs else "22:00"
+
+            grid = make_grid(h_ini, h_fin); blks = list(bloques_30(h_ini, h_fin))
+
+            content_map = defaultdict(lambda: {"bloques": set(), "asig": set(), "alias": set(), "docentes": set()})
+            for (d, start, end, r) in sesiones:
+                key = (DIA_LETRA.get(d, d), start, end)
+                utc_blocks = [tok.strip() for tok in str(r.get("UTC_BLOCK", "")).split(",") if str(tok).strip()]
+                for vis in utc_blocks:
+                    content_map[key]["bloques"].add(vis)
+                if pd.notna(r.get("ASIGNATURA")): content_map[key]["asig"].add(str(r.get("ASIGNATURA")))
+                if pd.notna(r.get("NOMBRE")):     content_map[key]["alias"].add(str(r.get("NOMBRE")))
+                if pd.notna(r.get("DOCENTE_NOMBRE")): content_map[key]["docentes"].add(str(r.get("DOCENTE_NOMBRE")))
+
+            for (dia, start, end), info in content_map.items():
+                try:
+                    i = next(k for k,b in enumerate(blks) if b.startswith(start))
+                except StopIteration:
+                    continue
+                span = span_30m(start, end)
+                bloques_fmt = ", ".join(sorted(info["bloques"])) if info["bloques"] else "(sin bloque)"
+                txt = (
+                    f"<b>{bloques_fmt}</b><br>"
+                    f"{', '.join(sorted(info['asig']))}<br>"
+                    f"{', '.join(sorted(info['alias']))}<br>"
+                    f"{docente_fmt(list(info['docentes']))}"
+                )
+                place(grid, blks, i, span, dia, txt)
+
+            cleanup(grid)
+            safe_salon = re.sub(r"[\\/*?\"<>| ]", "_", salon_texto)
+            fname = f"{sede_slug}_{safe_salon}.html"
+            turno_salon = df_sede["JORNADA"].mode().iat[0] if not df_sede["JORNADA"].isna().all() else "MIXTO"
+            html = template.render(logo=logo_b64, titulo_turno=f"TURNO: {turno_salon} - {sede_actual}",
+                                   grupo=str(salon_texto), dias=list(DIA_LETRA.values()), filas=grid).replace("GRUPO:", "SALÓN:")
+            (out_s / fname).write_text(html, "utf8")
+
+        # Empaquetar sede (solo si se solicita crear_zip)
+        if crear_zip:
+            zip_name = str(pathlib.Path(wd) / f"UTC_Reportes_SEDE_{sede_slug}.zip")
+            with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as z:
+                for f in out_g.glob("*.html"): z.write(f, arcname=f"grupos/{f.name}")
+                for f in out_d.glob("*.html"): z.write(f, arcname=f"docentes/{f.name}")
+                for f in out_s.glob("*.html"): z.write(f, arcname=f"salones/{f.name}")
 
     # AJUSTE: Generación de reportes finales (Mapeo y Packages)
-    generar_reporte_mapeo_bloques(df.copy(), "Mapeo_Bloques_Transformados.xlsx")
+    generar_reporte_mapeo_bloques(df.copy(), str(pathlib.Path(wd) / "Mapeo_Bloques_Transformados.xlsx"))
     try:
-        generar_reporte_packages_expandidos(df.copy(), "Reporte_Packages_Expandidos.xlsx")
+        generar_reporte_packages_expandidos(df.copy(), str(pathlib.Path(wd) / "Reporte_Packages_Expandidos.xlsx"))
     except Exception as e:
         print("Aviso: no se pudo generar Reporte_Packages_Expandidos.xlsx:", e)
 

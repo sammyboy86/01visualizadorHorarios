@@ -29,6 +29,13 @@ GRUPO, LIGA, HORARIOS DE LIGA, ID DOCENTE, NOMBRE DOCENTE, SALA ASIGNADA, SEMANA
 PAQUETES DE LA LIGA, BLOQUES UTC, NIVELES BLOQUES, VACANTE DE PAQUETES
 ```
 
+### Reporte de Secciones (salones reales y edificios)
+Archivos con patrón `Resultados*Secciones*Proceso*.xlsx` (o archivos que contengan `secciones` en el nombre):
+```
+SEDE, LIGAS, DIA, SALA, EDIFICIO (opcional)
+```
+Si la columna `EDIFICIO` está presente, en la visualización se mostrará como `SALA - EDIFICIO`.
+
 ### Excel consolidado (fallback)
 ```
 codigo_plantel, codigo_modalidad, codigo_jornada, codigo_programa, codigo_curriculo,
