@@ -13,10 +13,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-from modules.auth import is_logged_in, render_login_page
-from modules.config import configure_page
-from modules.styles import inject_app_css
-from modules.ui_steps import render_main_app
+from ui.auth import is_logged_in, render_login_page
+from ui.config import configure_page
+from ui.pasos import render_main_app
+from ui.styles import inject_app_css
 
 # 1. Configuración de página (primera llamada de Streamlit)
 configure_page()

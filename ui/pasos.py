@@ -4,17 +4,18 @@ Vistas y componentes paso a paso de la interfaz de usuario.
 """
 import os
 import pathlib
-import re
 import traceback
 
 import streamlit as st
 import streamlit.components.v1 as components
 
-from modules.auth import logout
-from modules.config import GRUPOS_SEMANAS_CFG, SEDES_CONOCIDAS
-from modules.download_modal import show_download_dialog
-from modules.engine import detect_sedes, prepare_workdir, run_generation
-from modules.styles import (
+from horarios.carga import detect_sedes
+from horarios.config import GRUPOS_SEMANAS, SEDES_CONOCIDAS
+from horarios.pipeline import carpeta_sede
+from ui.auth import logout
+from ui.descarga import show_download_dialog
+from ui.generacion import prepare_workdir, run_generation
+from ui.styles import (
     get_logo_b64,
     render_step_card_start,
     render_step_connector,
@@ -98,8 +99,8 @@ def step_3_weeks():
     render_step_card_start(3, "📅 Seleccionar semanas")
 
     active: list[dict] = []
-    gcols = st.columns(len(GRUPOS_SEMANAS_CFG))
-    for gcol, g in zip(gcols, GRUPOS_SEMANAS_CFG):
+    gcols = st.columns(len(GRUPOS_SEMANAS))
+    for gcol, g in zip(gcols, GRUPOS_SEMANAS):
         with gcol:
             if st.checkbox(g["nombre"], value=True, key=f"g_{g['id']}"):
                 active.append(g)
@@ -109,8 +110,16 @@ def step_3_weeks():
     else:
         st.info("Seleccione al menos un grupo de semanas")
 
+    st.caption(
+        "ℹ️ **Estructura organizada de salida:**\n"
+        "- **profesor/**: `1_8` y `9_16` (materias modulares combinadas con semestrales 1–16)\n"
+        "- **sala/**: `1_8` y `9_16` (ocupaciones modulares y ocupaciones semestrales 1–16)\n"
+        "- **grupo/**: `1_16`, `1_8` y `9_16` (bloques UTC)"
+    )
+
     render_step_connector()
     return active
+
 
 
 def step_4_generate(reporte, secciones, sedes_final, active):
@@ -146,14 +155,7 @@ def step_4_generate(reporte, secciones, sedes_final, active):
     if clicked and ready:
         try:
             wd = prepare_workdir(reporte, secciones)
-            bar = st.progress(0, text="Iniciando…")
-            status = st.empty()
-
-            zips = run_generation(wd, sedes_final, active, bar, status)
-
-            status.success(
-                f"✅ ¡Generación completada! — {len(zips)} archivo(s) ZIP."
-            )
+            zips = run_generation(wd, sedes_final, active)
 
             # Persistir rutas de resultados en el estado de sesión (ligero en RAM)
             st.session_state.res_zips = {
@@ -232,53 +234,86 @@ def step_6_preview():
     render_step_card_start(6, "👁️ Vista previa del horario")
     st.caption(
         "📌 Esta es solo una **vista previa** dentro del navegador. "
-        "Descargue el ZIP para obtener los archivos finales."
+        "Descargue el ZIP para obtener la estructura completa de archivos."
     )
 
     tabs = st.tabs(res_sedes)
 
+    nombres_periodo = {
+        "1_16": "Semanas 1–16",
+        "1_8": "Semanas 1–8 (Módulo 1)",
+        "9_16": "Semanas 9–16 (Módulo 2)",
+    }
+
     for tab, sede in zip(tabs, res_sedes):
         with tab:
-            slug = re.sub(r'[\\/*?"<>| ]', "_", sede)
-            parent = pathlib.Path(wd) / f"Horarios_{slug}"
+            parent = carpeta_sede(wd, sede)
             if not parent.exists():
                 st.info("Sin archivos para esta sede.")
                 continue
 
-            grp_files = sorted(parent.rglob("grupos/*.html"))
-            doc_files = sorted(parent.rglob("docentes/*.html"))
-            sal_files = sorted(parent.rglob("salones/*.html"))
-
-            view = st.radio(
-                "Ver:", ["Bloques / Grupos", "Docentes", "Salones"],
-                horizontal=True, key=f"v_{sede}",
+            tipo_sel = st.radio(
+                "Categoría:",
+                ["Profesor", "Sala", "Grupo"],
+                horizontal=True,
+                key=f"tipo_{sede}",
             )
-            if view == "Bloques / Grupos":
-                files = grp_files
-            elif view == "Docentes":
-                files = doc_files
-            else:
-                files = sal_files
 
-            if not files:
-                st.info(f"No hay archivos de {view.lower()}.")
+            folder_map = {
+                "Profesor": "profesor",
+                "Sala": "sala",
+                "Grupo": "grupo",
+            }
+            folder_name = folder_map[tipo_sel]
+            cat_dir = parent / folder_name
+
+            if not cat_dir.exists():
+                st.info(f"No hay horarios de {tipo_sel.lower()} generados.")
+                continue
+
+            subfolders = [
+                d for d in cat_dir.iterdir()
+                if d.is_dir() and any(d.glob("*.html"))
+            ]
+            subfolders.sort(key=lambda d: d.name)
+
+            if not subfolders:
+                st.info(f"No hay archivos en la categoría {tipo_sel.lower()}.")
+                continue
+
+            p_cols = st.columns([2, 5])
+            with p_cols[0]:
+                periodo_dir = st.selectbox(
+                    "Periodo / Semanas:",
+                    subfolders,
+                    format_func=lambda d: nombres_periodo.get(d.name, d.name),
+                    key=f"per_{sede}_{folder_name}",
+                )
+
+            html_files = sorted(periodo_dir.glob("*.html"), key=lambda f: f.stem)
+            if not html_files:
+                st.info(f"No hay archivos HTML en {periodo_dir.name}.")
+                continue
+
+            with p_cols[1]:
+                chosen_file = st.selectbox(
+                    "Archivo:",
+                    html_files,
+                    format_func=lambda f: f.stem,
+                    key=f"sel_{sede}_{folder_name}_{periodo_dir.name}",
+                )
+
+            raw_html = chosen_file.read_text("utf-8")
+            bg_style = (
+                '<style>html, body { background-color: #ffffff !important; '
+                'color: #000000 !important; }</style>'
+            )
+            if '</head>' in raw_html:
+                raw_html = raw_html.replace('</head>', bg_style + '</head>', 1)
             else:
-                labels = [f.stem for f in files]
-                chosen = st.selectbox(
-                    "Archivo:", labels, key=f"sel_{sede}_{view}"
-                )
-                idx = labels.index(chosen)
-                raw_html = files[idx].read_text("utf-8")
-                # Forzar fondo blanco para legibilidad en tema oscuro
-                bg_style = (
-                    '<style>html, body { background-color: #ffffff !important; '
-                    'color: #000000 !important; }</style>'
-                )
-                if '</head>' in raw_html:
-                    raw_html = raw_html.replace('</head>', bg_style + '</head>', 1)
-                else:
-                    raw_html = bg_style + raw_html
-                components.html(raw_html, height=700, scrolling=True)
+                raw_html = bg_style + raw_html
+            components.html(raw_html, height=700, scrolling=True)
+
 
 
 def render_main_app():
