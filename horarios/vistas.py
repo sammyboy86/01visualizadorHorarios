@@ -197,7 +197,7 @@ def generar_vista_docentes(
             subtitulo_turno=modulo_nombre,
         )
         # Nombre de archivo basado en ID, nombre y sufijo de módulo si aplica
-        partes = [str(doc_id), str(doc_nombre)]
+        partes = [str(doc_nombre),str(doc_id)]
         if sufijo_archivo:
             partes.append(str(sufijo_archivo))
         nombre_archivo = slugify("_".join(partes))
